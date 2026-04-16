@@ -93,7 +93,7 @@ func (t *DelegateTool) setupSubAgent(params delegateParams) (cobot.SubAgent, err
 		cmd := cfg.Command
 		args := cfg.Args
 		if len(args) == 0 {
-			args = []string{"--acp", "--stdio"}
+			args = []string{"acp", "--port", "0"}
 		}
 		timeout := delegateTimeout
 		if cfg.Timeout != "" {
