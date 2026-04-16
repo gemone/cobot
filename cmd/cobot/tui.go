@@ -3,6 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -168,13 +172,13 @@ func newTUIModel(a *agent.Agent, workspaceName string, wsMgr *workspace.Manager)
 
 	u, e, t, s, q, h := initStyles()
 	return tuiModel{
-		input:     ti,
-		spinner:   sp,
-		agent:     a,
-		workspace: workspaceName,
-		messages:  []chatMessage{},
-		darkBG:    true,
-		userStyle: u,
+		input:       ti,
+		spinner:     sp,
+		agent:       a,
+		workspace:   workspaceName,
+		messages:    []chatMessage{},
+		darkBG:      true,
+		userStyle:   u,
 		errorStyle:  e,
 		toolStyle:   t,
 		statusStyle: s,
@@ -210,6 +214,12 @@ func (m tuiModel) renderHub() string {
 		fmt.Sprintf("model:%s", m.agent.Model()),
 		fmt.Sprintf("tok:%s/%s", formatTokenCount(usage.PromptTokens), formatTokenCount(usage.CompletionTokens)),
 	}
+	if usage.ReasoningTokens > 0 {
+		parts = append(parts, fmt.Sprintf("reason:%s", formatTokenCount(usage.ReasoningTokens)))
+	}
+	if usage.CacheReadTokens > 0 || usage.CacheWriteTokens > 0 {
+		parts = append(parts, fmt.Sprintf("cache:%s/%s", formatTokenCount(usage.CacheReadTokens), formatTokenCount(usage.CacheWriteTokens)))
+	}
 	return m.hubStyle.Render(strings.Join(parts, " │")) + "\n"
 }
 
@@ -243,9 +253,16 @@ func (m *tuiModel) handleSlashCommand(text string) tea.Cmd {
 
 	case "/usage":
 		u := m.agent.SessionUsage()
+		info := fmt.Sprintf("Session usage — input: %d, output: %d, total: %d", u.PromptTokens, u.CompletionTokens, u.TotalTokens)
+		if u.ReasoningTokens > 0 {
+			info += fmt.Sprintf(", reasoning: %d", u.ReasoningTokens)
+		}
+		if u.CacheReadTokens > 0 || u.CacheWriteTokens > 0 {
+			info += fmt.Sprintf(", cache_read: %d, cache_write: %d", u.CacheReadTokens, u.CacheWriteTokens)
+		}
 		m.messages = append(m.messages, chatMessage{
 			role: "system",
-			raw:  fmt.Sprintf("Session usage — prompt: %d, completion: %d, total: %d", u.PromptTokens, u.CompletionTokens, u.TotalTokens),
+			raw:  info,
 		})
 
 	case "/reset":
@@ -497,7 +514,9 @@ func (m tuiModel) readNextEvent() tea.Cmd {
 }
 
 func (m tuiModel) handleStreamMsg(msg streamMsg) (tea.Model, tea.Cmd) {
-	if msg.err != "" {
+	// Tool errors (EventToolResult with Error) are non-fatal — the agent loop
+	// feeds them back to the model for retry. Only EventError is terminal.
+	if msg.err != "" && msg.eventType != cobot.EventToolResult {
 		m.finishStream()
 		m.messages = append(m.messages, chatMessage{role: "error", raw: msg.err})
 		m.renderLastAssistant()
@@ -527,7 +546,11 @@ func (m tuiModel) handleStreamMsg(msg streamMsg) (tea.Model, tea.Cmd) {
 		if len(short) > maxResultDisplayLen {
 			short = short[:maxResultDisplayLen] + "..."
 		}
-		m.messages = append(m.messages, chatMessage{role: "tool", raw: fmt.Sprintf("[Result: %s]", short)})
+		prefix := "Result"
+		if msg.err != "" {
+			prefix = "Error"
+		}
+		m.messages = append(m.messages, chatMessage{role: "tool", raw: fmt.Sprintf("[%s: %s]", prefix, short)})
 	case cobot.EventError:
 		m.messages = append(m.messages, chatMessage{role: "error", raw: msg.content})
 	}
@@ -650,6 +673,24 @@ func (m tuiModel) View() tea.View {
 	return v
 }
 
+// redirectSlogForTUI prevents slog output from corrupting the bubbletea
+// alt-screen display. In debug mode, logs go to a file; otherwise they are
+// discarded. Returns a cleanup function to close the log file (if any).
+func redirectSlogForTUI() func() {
+	if debugMode {
+		logDir := os.TempDir()
+		logPath := filepath.Join(logDir, "cobot-tui.log")
+		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err == nil {
+			slog.SetDefault(slog.New(slog.NewTextHandler(f, &slog.HandlerOptions{Level: slog.LevelDebug})))
+			return func() { f.Close() }
+		}
+		// Fall through to discard if file open failed.
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError + 1})))
+	return func() {}
+}
+
 var tuiCmd = &cobra.Command{
 	Use:   "tui",
 	Short: "Start interactive TUI",
@@ -658,6 +699,11 @@ var tuiCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+
+		// Redirect slog away from stderr before entering alt-screen.
+		// Any stderr writes corrupt the bubbletea terminal display.
+		cleanupLog := redirectSlogForTUI()
+		defer cleanupLog()
 
 		a, ws, cleanup, err := initAgent(cfg, false)
 		if err != nil {

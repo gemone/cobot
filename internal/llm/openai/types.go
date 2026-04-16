@@ -8,7 +8,7 @@ import (
 
 type chatMessage struct {
 	Role         string         `json:"role"`
-	Content      string         `json:"content"`
+	Content      *string        `json:"content"`
 	ToolCalls    []chatToolCall `json:"tool_calls,omitempty"`
 	ToolCallID   string         `json:"tool_call_id,omitempty"`
 	Name         string         `json:"name,omitempty"`
@@ -59,9 +59,19 @@ type chatChoice struct {
 }
 
 type chatUsage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens            int                      `json:"prompt_tokens"`
+	CompletionTokens        int                      `json:"completion_tokens"`
+	TotalTokens             int                      `json:"total_tokens"`
+	PromptTokensDetails     *promptTokensDetails     `json:"prompt_tokens_details,omitempty"`
+	CompletionTokensDetails *completionTokensDetails `json:"completion_tokens_details,omitempty"`
+}
+
+type promptTokensDetails struct {
+	CachedTokens int `json:"cached_tokens"`
+}
+
+type completionTokensDetails struct {
+	ReasoningTokens int `json:"reasoning_tokens"`
 }
 
 type streamChunk struct {
@@ -100,13 +110,20 @@ func toProviderResponse(resp *chatResponse) *cobot.ProviderResponse {
 	}
 
 	choice := resp.Choices[0]
+	u := cobot.Usage{
+		PromptTokens:     resp.Usage.PromptTokens,
+		CompletionTokens: resp.Usage.CompletionTokens,
+		TotalTokens:      resp.Usage.TotalTokens,
+	}
+	if resp.Usage.PromptTokensDetails != nil {
+		u.CacheReadTokens = resp.Usage.PromptTokensDetails.CachedTokens
+	}
+	if resp.Usage.CompletionTokensDetails != nil {
+		u.ReasoningTokens = resp.Usage.CompletionTokensDetails.ReasoningTokens
+	}
 	result := &cobot.ProviderResponse{
-		Content: choice.Message.Content,
-		Usage: cobot.Usage{
-			PromptTokens:     resp.Usage.PromptTokens,
-			CompletionTokens: resp.Usage.CompletionTokens,
-			TotalTokens:      resp.Usage.TotalTokens,
-		},
+		Content: derefString(choice.Message.Content),
+		Usage:   u,
 	}
 
 	switch choice.FinishReason {
@@ -134,7 +151,7 @@ func fromProviderMessages(msgs []cobot.Message) []chatMessage {
 	for _, m := range msgs {
 		cm := chatMessage{
 			Role:    string(m.Role),
-			Content: m.Content,
+			Content: stringPtr(m.Content),
 		}
 
 		for _, tc := range m.ToolCalls {
@@ -148,17 +165,49 @@ func fromProviderMessages(msgs []cobot.Message) []chatMessage {
 			})
 		}
 
+		// Assistant messages with tool_calls must have nil content, not empty string.
+		// OpenAI API rejects "content": "" when tool_calls are present.
+		if len(cm.ToolCalls) > 0 {
+			cm.Content = nil
+		}
+
 		if m.ToolResult != nil {
 			cm.ToolCallID = m.ToolResult.CallID
-			cm.Content = m.ToolResult.Output
+			content := m.ToolResult.Output
 			if m.ToolResult.Error != "" {
-				cm.Content = m.ToolResult.Error
+				if content != "" {
+					content = content + "\n[ERROR] " + m.ToolResult.Error
+				} else {
+					content = "[ERROR] " + m.ToolResult.Error
+				}
+			}
+			if content == "" {
+				// OpenAI requires non-empty content for tool result messages;
+				// use a single space as a safe placeholder.
+				space := " "
+				cm.Content = &space
+			} else {
+				cm.Content = &content
 			}
 		}
 
 		result = append(result, cm)
 	}
 	return result
+}
+
+func stringPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 func fromProviderTools(tools []cobot.ToolDef) []chatTool {

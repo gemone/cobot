@@ -33,6 +33,13 @@ const maxPersonaSize = 64 * 1024 // 64 KB
 
 type WorkspaceConfigUpdateTool struct {
 	workspace *workspace.Workspace
+	sandbox   *cobot.SandboxConfig
+}
+
+type WorkspaceConfigUpdateToolOption func(*WorkspaceConfigUpdateTool)
+
+func WithWorkspaceSandbox(s *cobot.SandboxConfig) WorkspaceConfigUpdateToolOption {
+	return func(t *WorkspaceConfigUpdateTool) { t.sandbox = s }
 }
 
 func (t *WorkspaceConfigUpdateTool) Name() string { return "workspace_config_update" }
@@ -64,9 +71,15 @@ func (t *WorkspaceConfigUpdateTool) Execute(ctx context.Context, args json.RawMe
 		cfg.EnabledSkills = *params.EnabledSkills
 	}
 	if params.SandboxRoot != nil {
+		if t.sandbox != nil {
+			return "", fmt.Errorf("cannot modify sandbox_root while sandbox is active")
+		}
 		cfg.Sandbox.Root = *params.SandboxRoot
 	}
 	if params.AllowPaths != nil {
+		if t.sandbox != nil {
+			return "", fmt.Errorf("cannot modify allow_paths while sandbox is active")
+		}
 		cfg.Sandbox.AllowPaths = *params.AllowPaths
 	}
 	if params.BlockedCommands != nil {
@@ -275,8 +288,8 @@ func (t *SkillUpdateTool) Execute(ctx context.Context, args json.RawMessage) (st
 	return fmt.Sprintf("skill updated: %s", filepath.Base(found)), nil
 }
 
-func RegisterWorkspaceTools(registry cobot.ToolRegistry, ws *workspace.Workspace) {
-	registry.Register(&WorkspaceConfigUpdateTool{workspace: ws})
+func RegisterWorkspaceTools(registry cobot.ToolRegistry, ws *workspace.Workspace, sandbox *cobot.SandboxConfig) {
+	registry.Register(&WorkspaceConfigUpdateTool{workspace: ws, sandbox: sandbox})
 	registry.Register(&SkillCreateTool{workspace: ws})
 	registry.Register(&PersonaUpdateTool{workspace: ws})
 	registry.Register(&AgentConfigUpdateTool{workspace: ws})

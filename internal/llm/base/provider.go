@@ -82,7 +82,7 @@ var DefaultTransport = func() *http.Transport {
 		KeepAlive: 30 * time.Second,
 	}).DialContext
 	t.TLSHandshakeTimeout = 10 * time.Second
-	t.ResponseHeaderTimeout = 2 * time.Minute
+	t.ResponseHeaderTimeout = 5 * time.Minute
 	return t
 }()
 

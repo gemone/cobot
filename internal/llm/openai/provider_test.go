@@ -40,7 +40,7 @@ func TestToProviderResponseToolCalls(t *testing.T) {
 		Choices: []chatChoice{
 			{
 				Message: chatMessage{
-					Content: "",
+					Content: nil, // assistant with tool_calls has nil content
 					ToolCalls: []chatToolCall{
 						{
 							ID:   "call_123",
@@ -122,19 +122,22 @@ func TestFromProviderMessages(t *testing.T) {
 		t.Fatalf("expected 4 messages, got %d", len(result))
 	}
 
-	if result[0].Role != "system" || result[0].Content != "You are helpful." {
+	if result[0].Role != "system" || derefString(result[0].Content) != "You are helpful." {
 		t.Errorf("system message not converted correctly")
 	}
-	if result[1].Role != "user" || result[1].Content != "Hello" {
+	if result[1].Role != "user" || derefString(result[1].Content) != "Hello" {
 		t.Errorf("user message not converted correctly")
 	}
 	if result[2].Role != "assistant" {
 		t.Errorf("assistant role not converted correctly")
 	}
+	if result[2].Content != nil {
+		t.Errorf("assistant with tool_calls should have nil content, got %q", derefString(result[2].Content))
+	}
 	if len(result[2].ToolCalls) != 1 || result[2].ToolCalls[0].ID != "call_1" {
 		t.Errorf("assistant tool calls not converted correctly")
 	}
-	if result[3].ToolCallID != "call_1" || result[3].Content != "result data" {
+	if result[3].ToolCallID != "call_1" || derefString(result[3].Content) != "result data" {
 		t.Errorf("tool result message not converted correctly")
 	}
 }

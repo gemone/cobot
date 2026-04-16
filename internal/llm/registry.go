@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -94,6 +95,17 @@ func (r *Registry) ProviderForModel(modelSpec string) (cobot.Provider, string, e
 		return nil, "", err
 	}
 	return p, modelName, nil
+}
+
+func (r *Registry) ValidateModel(ctx context.Context, modelSpec string) error {
+	p, modelName, err := r.ProviderForModel(modelSpec)
+	if err != nil {
+		return err
+	}
+	if v, ok := p.(cobot.ModelValidator); ok {
+		return v.ValidateModel(ctx, modelName)
+	}
+	return nil
 }
 
 func (r *Registry) createProvider(name string) (cobot.Provider, error) {

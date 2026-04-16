@@ -43,7 +43,11 @@ func (t *ReadFileTool) Name() string {
 }
 
 func (t *ReadFileTool) Description() string {
-	return "Read the contents of a file at the given path"
+	desc := "Read the contents of a file at the given path."
+	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
+		desc += fmt.Sprintf(" All paths must start with %q.", t.sandbox.VirtualRoot)
+	}
+	return desc
 }
 
 func (t *ReadFileTool) Parameters() json.RawMessage {
@@ -54,6 +58,13 @@ func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	var a readFileArgs
 	if err := decodeArgs(args, &a); err != nil {
 		return "", err
+	}
+	if t.sandbox != nil {
+		resolved, err := t.sandbox.ResolvePath(a.Path)
+		if err != nil {
+			return "", err
+		}
+		a.Path = resolved
 	}
 	if t.sandbox != nil && !t.sandbox.IsAllowed(a.Path, false) {
 		return "", fmt.Errorf("path %q is outside allowed workspace paths", a.Path)
@@ -93,7 +104,11 @@ func (t *WriteFileTool) Name() string {
 }
 
 func (t *WriteFileTool) Description() string {
-	return "Write content to a file at the given path"
+	desc := "Write content to a file at the given path."
+	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
+		desc += fmt.Sprintf(" All paths must start with %q.", t.sandbox.VirtualRoot)
+	}
+	return desc
 }
 
 func (t *WriteFileTool) Parameters() json.RawMessage {
@@ -104,6 +119,13 @@ func (t *WriteFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	var a writeFileArgs
 	if err := decodeArgs(args, &a); err != nil {
 		return "", err
+	}
+	if t.sandbox != nil {
+		resolved, err := t.sandbox.ResolvePath(a.Path)
+		if err != nil {
+			return "", err
+		}
+		a.Path = resolved
 	}
 	if t.sandbox != nil && !t.sandbox.IsAllowed(a.Path, true) {
 		return "", fmt.Errorf("path %q is outside allowed workspace paths", a.Path)

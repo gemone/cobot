@@ -175,3 +175,7 @@ func (r *mockModelRegistry) ProviderForModel(spec string) (cobot.Provider, strin
 	}
 	return r.provider, r.modelName, nil
 }
+
+func (r *mockModelRegistry) ValidateModel(_ context.Context, _ string) error {
+	return r.err
+}

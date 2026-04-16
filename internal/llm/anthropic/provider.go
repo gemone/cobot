@@ -15,6 +15,7 @@ import (
 )
 
 var _ cobot.Provider = (*Provider)(nil)
+var _ cobot.ModelValidator = (*Provider)(nil)
 
 const ProviderName = "anthropic"
 
@@ -35,6 +36,19 @@ func NewProvider(apiKey, baseURL string) *Provider {
 }
 
 func (p *Provider) Name() string { return ProviderName }
+
+var knownAnthropicPrefixes = []string{
+	"claude-",
+}
+
+func (p *Provider) ValidateModel(_ context.Context, model string) error {
+	for _, prefix := range knownAnthropicPrefixes {
+		if strings.HasPrefix(model, prefix) {
+			return nil
+		}
+	}
+	return fmt.Errorf("model %q is not a recognized Anthropic model (expected claude-* prefix)", model)
+}
 
 func (p *Provider) Complete(ctx context.Context, req *cobot.ProviderRequest) (*cobot.ProviderResponse, error) {
 	body := p.buildRequest(req, false)
@@ -61,8 +75,9 @@ func (p *Provider) Stream(ctx context.Context, req *cobot.ProviderRequest) (<-ch
 	ch := make(chan cobot.ProviderChunk, 64)
 	go func() {
 		defer close(ch)
-		defer respBody.Close()
-		p.readStream(respBody, ch)
+		sse := base.NewSSEScannerWithContext(ctx, respBody, base.DefaultSSEIdleTimeout)
+		defer sse.Close()
+		p.readStream(sse, ch)
 	}()
 	return ch, nil
 }
@@ -75,8 +90,50 @@ func (p *Provider) buildRequest(req *cobot.ProviderRequest, stream bool) message
 			system = m.Content
 			continue
 		}
-		content, _ := json.Marshal(textBlock{Type: "text", Text: m.Content})
-		msgs = append(msgs, message{Role: string(m.Role), Content: content})
+
+		switch {
+		case m.ToolResult != nil:
+			// Tool result message → tool_result content block
+			content := m.ToolResult.Output
+			isError := false
+			if m.ToolResult.Error != "" {
+				isError = true
+				if content != "" {
+					content = content + "\n[ERROR] " + m.ToolResult.Error
+				} else {
+					content = "[ERROR] " + m.ToolResult.Error
+				}
+			}
+			blocks, _ := json.Marshal([]toolResultBlock{{
+				Type:      "tool_result",
+				ToolUseID: m.ToolResult.CallID,
+				Content:   content,
+				IsError:   isError,
+			}})
+			msgs = append(msgs, message{Role: "user", Content: blocks})
+
+		case len(m.ToolCalls) > 0:
+			// Assistant message with tool calls → text block (if any) + tool_use blocks
+			var blocks []any
+			if m.Content != "" {
+				blocks = append(blocks, textBlock{Type: "text", Text: m.Content})
+			}
+			for _, tc := range m.ToolCalls {
+				blocks = append(blocks, toolUseBlock{
+					Type:  "tool_use",
+					ID:    tc.ID,
+					Name:  tc.Name,
+					Input: tc.Arguments,
+				})
+			}
+			content, _ := json.Marshal(blocks)
+			msgs = append(msgs, message{Role: "assistant", Content: content})
+
+		default:
+			// Plain text message (user or assistant)
+			content, _ := json.Marshal([]textBlock{{Type: "text", Text: m.Content}})
+			msgs = append(msgs, message{Role: string(m.Role), Content: content})
+		}
 	}
 
 	var tools []toolDef
@@ -105,8 +162,8 @@ func (p *Provider) buildRequest(req *cobot.ProviderRequest, stream bool) message
 
 func (p *Provider) doRequest(ctx context.Context, body messagesRequest) (io.ReadCloser, error) {
 	headers := map[string]string{
-		"x-api-key":          p.cfg.APIKey,
-		"anthropic-version":  "2023-06-01",
+		"x-api-key":         p.cfg.APIKey,
+		"anthropic-version": "2023-06-01",
 	}
 	return base.DoRequest(p.client, p.cfg, ctx, "/v1/messages", body, headers)
 }
@@ -130,15 +187,15 @@ func (p *Provider) toProviderResponse(resp *messagesResponse) *cobot.ProviderRes
 			PromptTokens:     resp.Usage.InputTokens,
 			CompletionTokens: resp.Usage.OutputTokens,
 			TotalTokens:      resp.Usage.InputTokens + resp.Usage.OutputTokens,
+			CacheReadTokens:  resp.Usage.CacheReadInputTokens,
+			CacheWriteTokens: resp.Usage.CacheCreationInputTokens,
 		},
 	}
 }
 
-func (p *Provider) readStream(body io.ReadCloser, ch chan<- cobot.ProviderChunk) {
+func (p *Provider) readStream(sse *base.SSEScanner, ch chan<- cobot.ProviderChunk) {
 	pending := make(map[int]*base.PendingToolCall)
-	var inputTokens, outputTokens int
-
-	sse := base.NewSSEScanner(body)
+	var inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens int
 
 	for {
 		_, data, err := sse.Next()
@@ -165,6 +222,8 @@ func (p *Provider) readStream(body io.ReadCloser, ch chan<- cobot.ProviderChunk)
 		case "message_start":
 			if evt.Message != nil {
 				inputTokens = evt.Message.Usage.InputTokens
+				cacheReadTokens = evt.Message.Usage.CacheReadInputTokens
+				cacheWriteTokens = evt.Message.Usage.CacheCreationInputTokens
 			}
 
 		case "content_block_start":
@@ -210,6 +269,8 @@ func (p *Provider) readStream(body io.ReadCloser, ch chan<- cobot.ProviderChunk)
 				PromptTokens:     inputTokens,
 				CompletionTokens: outputTokens,
 				TotalTokens:      inputTokens + outputTokens,
+				CacheReadTokens:  cacheReadTokens,
+				CacheWriteTokens: cacheWriteTokens,
 			}}
 			return
 		}

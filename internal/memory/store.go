@@ -54,6 +54,33 @@ func (s *Store) Store(ctx context.Context, content string, wingID, roomID string
 	return id, nil
 }
 
+func (s *Store) StoreByName(ctx context.Context, content, wingName, roomName, hallType string) (string, error) {
+	if hallType == "" {
+		hallType = cobot.TagFacts
+	}
+	wingID, err := s.CreateWingIfNotExists(ctx, wingName)
+	if err != nil {
+		return "", err
+	}
+	roomID, err := s.CreateRoomIfNotExists(ctx, wingID, roomName, hallType)
+	if err != nil {
+		return "", err
+	}
+	return s.Store(ctx, content, wingID, roomID)
+}
+
+func (s *Store) ConsolidateByName(ctx context.Context, wingName, roomName string) error {
+	wing, err := s.GetWingByName(ctx, wingName)
+	if err != nil || wing == nil {
+		return nil
+	}
+	room, err := s.GetRoomByName(ctx, wing.ID, roomName)
+	if err != nil || room == nil {
+		return nil
+	}
+	return s.AutoSummarizeRoom(ctx, wing.ID, room.ID)
+}
+
 // Search performs full-text search across all drawers.
 func (s *Store) Search(ctx context.Context, query *cobot.SearchQuery) ([]*cobot.SearchResult, error) {
 	return s.searchDrawers(ctx, query)

@@ -51,6 +51,9 @@ type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+	ReasoningTokens  int `json:"reasoning_tokens,omitempty"`
+	CacheReadTokens  int `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
 }
 
 type ProviderRequest struct {
@@ -90,6 +93,7 @@ const (
 	EventText       EventType = "text"
 	EventToolCall   EventType = "tool_call"
 	EventToolResult EventType = "tool_result"
+	EventToolStart  EventType = "tool_start"
 	EventDone       EventType = "done"
 	EventError      EventType = "error"
 )

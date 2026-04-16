@@ -1,10 +1,10 @@
 package openai
 
 import (
-	"io"
 	"strings"
 	"testing"
 
+	"github.com/cobot-agent/cobot/internal/llm/base"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -19,13 +19,13 @@ func TestReadStreamSingleToolCall(t *testing.T) {
 		"data: [DONE]",
 	}, "\n") + "\n"
 
-	body := io.NopCloser(strings.NewReader(sseData))
+	sse := base.NewSSEScanner(strings.NewReader(sseData))
 	ch := make(chan cobot.ProviderChunk, 64)
 
 	p := &Provider{}
 	go func() {
 		defer close(ch)
-		p.readStream(body, ch)
+		p.readStream(sse, ch)
 	}()
 
 	var chunks []cobot.ProviderChunk
@@ -88,13 +88,13 @@ func TestReadStreamMultipleToolCalls(t *testing.T) {
 		"data: [DONE]",
 	}, "\n") + "\n"
 
-	body := io.NopCloser(strings.NewReader(sseData))
+	sse := base.NewSSEScanner(strings.NewReader(sseData))
 	ch := make(chan cobot.ProviderChunk, 64)
 
 	p := &Provider{}
 	go func() {
 		defer close(ch)
-		p.readStream(body, ch)
+		p.readStream(sse, ch)
 	}()
 
 	var toolCallChunks []cobot.ProviderChunk
@@ -133,13 +133,13 @@ func TestReadStreamTextOnly(t *testing.T) {
 		"data: [DONE]",
 	}, "\n") + "\n"
 
-	body := io.NopCloser(strings.NewReader(sseData))
+	sse := base.NewSSEScanner(strings.NewReader(sseData))
 	ch := make(chan cobot.ProviderChunk, 64)
 
 	p := &Provider{}
 	go func() {
 		defer close(ch)
-		p.readStream(body, ch)
+		p.readStream(sse, ch)
 	}()
 
 	var content string

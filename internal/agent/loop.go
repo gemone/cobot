@@ -20,7 +20,11 @@ func (a *Agent) buildRequest(ctx context.Context) *cobot.ProviderRequest {
 func (a *Agent) executeToolsAndCollect(ctx context.Context, toolCalls []cobot.ToolCall) []*cobot.ToolResult {
 	results := a.tools.ExecuteParallel(ctx, toolCalls)
 	for _, tr := range results {
-		slog.Debug("tool completed", "call_id", tr.CallID, "result_bytes", len(tr.Output))
+		if tr.Error != "" {
+			slog.Error("tool error", "call_id", tr.CallID, "err", tr.Error)
+		} else {
+			slog.Debug("tool completed", "call_id", tr.CallID, "result_bytes", len(tr.Output))
+		}
 		a.AddMessage(cobot.Message{
 			Role:       cobot.RoleTool,
 			ToolResult: tr,
@@ -45,6 +49,10 @@ func (a *Agent) runLoop(ctx context.Context, prompt, debugLabel string, executeT
 		if err != nil {
 			return err
 		}
+
+		a.turnCount++
+		a.checkAndCompress(ctx)
+
 		if stop {
 			return nil
 		}
@@ -68,7 +76,17 @@ func (a *Agent) Prompt(ctx context.Context, message string) (*cobot.ProviderResp
 		}
 
 		slog.Debug("agent response", "turn", turn, "content_len", len(resp.Content), "tool_calls", len(resp.ToolCalls), "stop", resp.StopReason)
-		a.usageTracker.Add(resp.Usage)
+		usage := resp.Usage
+		if usage.TotalTokens == 0 {
+			usage = estimateMessagesUsage(req.Messages)
+			usage.CompletionTokens = estimateTokens(resp.Content)
+			for _, tc := range resp.ToolCalls {
+				usage.CompletionTokens += estimateTokens(tc.Name) + estimateTokens(string(tc.Arguments))
+			}
+			usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+		}
+		a.usageTracker.Add(usage)
+		a.PersistUsage()
 		a.AddMessage(cobot.Message{
 			Role:      cobot.RoleAssistant,
 			Content:   resp.Content,
@@ -93,7 +111,18 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 	}
 	ctx = a.deriveCtx(ctx)
 
-	ch := make(chan cobot.Event, 64)
+	ch := make(chan cobot.Event, 1024)
+
+	// sendEvent sends an event to the channel, respecting context cancellation.
+	// Returns false if context was cancelled (caller should abort).
+	sendEvent := func(evt cobot.Event) bool {
+		select {
+		case ch <- evt:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
 
 	a.streamWg.Add(1)
 	go func() {
@@ -120,22 +149,35 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 				}
 				if chunk.Content != "" {
 					content += chunk.Content
-					ch <- cobot.Event{Type: cobot.EventText, Content: chunk.Content}
+					if !sendEvent(cobot.Event{Type: cobot.EventText, Content: chunk.Content}) {
+						return false, ctx.Err()
+					}
 				}
 				if chunk.ToolCall != nil {
 					toolCalls = append(toolCalls, *chunk.ToolCall)
-					ch <- cobot.Event{Type: cobot.EventToolCall, ToolCall: chunk.ToolCall}
+					if !sendEvent(cobot.Event{Type: cobot.EventToolCall, ToolCall: chunk.ToolCall}) {
+						return false, ctx.Err()
+					}
 				}
 				if chunk.Usage != nil {
 					turnUsage.PromptTokens += chunk.Usage.PromptTokens
 					turnUsage.CompletionTokens += chunk.Usage.CompletionTokens
 					turnUsage.TotalTokens += chunk.Usage.TotalTokens
+					turnUsage.ReasoningTokens += chunk.Usage.ReasoningTokens
+					turnUsage.CacheReadTokens += chunk.Usage.CacheReadTokens
+					turnUsage.CacheWriteTokens += chunk.Usage.CacheWriteTokens
 				}
 				if chunk.Done && len(toolCalls) == 0 {
 					slog.Debug("stream done", "turn", turn, "content_len", len(content))
 					a.AddMessage(cobot.Message{Role: cobot.RoleAssistant, Content: content})
+					if turnUsage.TotalTokens == 0 {
+						turnUsage = estimateMessagesUsage(req.Messages)
+						turnUsage.CompletionTokens = estimateTokens(content)
+						turnUsage.TotalTokens = turnUsage.PromptTokens + turnUsage.CompletionTokens
+					}
 					a.usageTracker.Add(turnUsage)
-					ch <- cobot.Event{Type: cobot.EventDone, Done: true, Usage: &turnUsage}
+					a.PersistUsage()
+					sendEvent(cobot.Event{Type: cobot.EventDone, Done: true, Usage: &turnUsage})
 					return true, nil
 				}
 			}
@@ -143,9 +185,95 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 			if len(toolCalls) > 0 {
 				slog.Debug("stream tool calls", "turn", turn, "count", len(toolCalls))
 				a.AddMessage(cobot.Message{Role: cobot.RoleAssistant, Content: content, ToolCalls: toolCalls})
-				results := a.tools.ExecuteParallel(ctx, toolCalls)
-				for _, tr := range results {
-					ch <- cobot.Event{Type: cobot.EventToolResult, Content: tr.Output}
+				if turnUsage.TotalTokens == 0 {
+					turnUsage = estimateMessagesUsage(req.Messages)
+					turnUsage.CompletionTokens = estimateTokens(content)
+					for _, tc := range toolCalls {
+						turnUsage.CompletionTokens += estimateTokens(tc.Name) + estimateTokens(string(tc.Arguments))
+					}
+					turnUsage.TotalTokens = turnUsage.PromptTokens + turnUsage.CompletionTokens
+				}
+				a.usageTracker.Add(turnUsage)
+				a.PersistUsage()
+
+				// Split tool calls into streaming vs normal tools.
+				var normalCalls []cobot.ToolCall
+				var streamingCalls []cobot.ToolCall
+				for _, tc := range toolCalls {
+					if a.tools.IsStreamingTool(tc.Name) {
+						streamingCalls = append(streamingCalls, tc)
+					} else {
+						normalCalls = append(normalCalls, tc)
+					}
+				}
+
+				// Execute normal tools in parallel (blocking).
+				if len(normalCalls) > 0 {
+					results := a.tools.ExecuteParallel(ctx, normalCalls)
+					for _, tr := range results {
+						evt := cobot.Event{Type: cobot.EventToolResult, Content: tr.Output}
+						if tr.Error != "" {
+							evt.Content = tr.Error
+							evt.Error = tr.Error
+							slog.Error("tool error", "call_id", tr.CallID, "err", tr.Error)
+						}
+						if !sendEvent(evt) {
+							return false, ctx.Err()
+						}
+						a.AddMessage(cobot.Message{Role: cobot.RoleTool, ToolResult: tr})
+					}
+				}
+
+				// Execute streaming tools sequentially, forwarding events.
+				for _, sc := range streamingCalls {
+					if !sendEvent(cobot.Event{Type: cobot.EventToolStart, Content: sc.Name, ToolCall: &sc}) {
+						return false, ctx.Err()
+					}
+					tool, err := a.tools.Get(sc.Name)
+					if err != nil {
+						tr := &cobot.ToolResult{CallID: sc.ID, Error: err.Error()}
+						if !sendEvent(cobot.Event{Type: cobot.EventToolResult, Content: tr.Error, Error: tr.Error}) {
+							return false, ctx.Err()
+						}
+						a.AddMessage(cobot.Message{Role: cobot.RoleTool, ToolResult: tr})
+						continue
+					}
+					st, ok := tool.(cobot.StreamingTool)
+					if !ok {
+						output, execErr := tool.Execute(ctx, sc.Arguments)
+						tr := &cobot.ToolResult{CallID: sc.ID}
+						if execErr != nil {
+							tr.Error = execErr.Error()
+						} else {
+							tr.Output = output
+						}
+						resultEvt := cobot.Event{Type: cobot.EventToolResult, Content: tr.Output}
+						if tr.Error != "" {
+							resultEvt.Content = tr.Error
+							resultEvt.Error = tr.Error
+						}
+						if !sendEvent(resultEvt) {
+							return false, ctx.Err()
+						}
+						a.AddMessage(cobot.Message{Role: cobot.RoleTool, ToolResult: tr})
+						continue
+					}
+					output, execErr := st.ExecuteStream(ctx, sc.Arguments, ch)
+					tr := &cobot.ToolResult{CallID: sc.ID}
+					if execErr != nil {
+						tr.Error = execErr.Error()
+						slog.Error("streaming tool error", "call_id", sc.ID, "err", execErr)
+					} else {
+						tr.Output = output
+					}
+					resultEvt := cobot.Event{Type: cobot.EventToolResult, Content: tr.Output}
+					if tr.Error != "" {
+						resultEvt.Content = tr.Error
+						resultEvt.Error = tr.Error
+					}
+					if !sendEvent(resultEvt) {
+						return false, ctx.Err()
+					}
 					a.AddMessage(cobot.Message{Role: cobot.RoleTool, ToolResult: tr})
 				}
 			}
@@ -156,7 +284,7 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 			if errors.Is(err, cobot.ErrMaxTurnsExceeded) {
 				slog.Debug("max turns exceeded", "turns", a.config.MaxTurns)
 			}
-			ch <- cobot.Event{Type: cobot.EventError, Error: err.Error()}
+			sendEvent(cobot.Event{Type: cobot.EventError, Error: err.Error()})
 		}
 	}()
 

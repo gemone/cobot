@@ -83,7 +83,11 @@ func (t *ShellExecTool) Name() string {
 }
 
 func (t *ShellExecTool) Description() string {
-	return "Execute a shell command and return its output"
+	desc := "Execute a shell command and return its output."
+	if t.workdir != "" {
+		desc += fmt.Sprintf(" Working directory: %s — all relative paths resolve from here.", t.workdir)
+	}
+	return desc
 }
 
 func (t *ShellExecTool) Parameters() json.RawMessage {

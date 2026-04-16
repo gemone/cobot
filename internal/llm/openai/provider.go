@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"maps"
 	"net/http"
 	"slices"
@@ -14,6 +13,7 @@ import (
 )
 
 var _ cobot.Provider = (*Provider)(nil)
+var _ cobot.ModelValidator = (*Provider)(nil)
 
 const ProviderName = "openai"
 
@@ -34,6 +34,29 @@ func NewProvider(apiKey, baseURL string) *Provider {
 }
 
 func (p *Provider) Name() string { return ProviderName }
+
+func (p *Provider) ValidateModel(ctx context.Context, model string) error {
+	url := p.cfg.BaseURL + "/models/" + model
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("openai: create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("openai: validate model: %w", err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("model %q not found", model)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("openai: validate model: HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
 
 func (p *Provider) Complete(ctx context.Context, req *cobot.ProviderRequest) (*cobot.ProviderResponse, error) {
 	body := chatRequest{
@@ -79,17 +102,16 @@ func (p *Provider) Stream(ctx context.Context, req *cobot.ProviderRequest) (<-ch
 	ch := make(chan cobot.ProviderChunk, 64)
 	go func() {
 		defer close(ch)
-		defer respBody.Close()
-		p.readStream(respBody, ch)
+		sse := base.NewSSEScannerWithContext(ctx, respBody, base.DefaultSSEIdleTimeout)
+		defer sse.Close()
+		p.readStream(sse, ch)
 	}()
 
 	return ch, nil
 }
 
-func (p *Provider) readStream(body io.ReadCloser, ch chan<- cobot.ProviderChunk) {
+func (p *Provider) readStream(sse *base.SSEScanner, ch chan<- cobot.ProviderChunk) {
 	pending := make(map[int]*base.PendingToolCall)
-
-	sse := base.NewSSEScanner(body)
 
 	var lastUsage *cobot.Usage
 	for {
@@ -119,12 +141,18 @@ func (p *Provider) readStream(body io.ReadCloser, ch chan<- cobot.ProviderChunk)
 			continue
 		}
 
-		// Capture usage from the final chunk (OpenAI sends it with stream_options)
+		// Capture usage if the provider includes it in the stream response.
 		if chunk.Usage != nil {
 			lastUsage = &cobot.Usage{
 				PromptTokens:     chunk.Usage.PromptTokens,
 				CompletionTokens: chunk.Usage.CompletionTokens,
 				TotalTokens:      chunk.Usage.TotalTokens,
+			}
+			if chunk.Usage.PromptTokensDetails != nil {
+				lastUsage.CacheReadTokens = chunk.Usage.PromptTokensDetails.CachedTokens
+			}
+			if chunk.Usage.CompletionTokensDetails != nil {
+				lastUsage.ReasoningTokens = chunk.Usage.CompletionTokensDetails.ReasoningTokens
 			}
 		}
 

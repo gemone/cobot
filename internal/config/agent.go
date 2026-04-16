@@ -17,6 +17,7 @@ type AgentConfig struct {
 	EnabledSkills []string             `yaml:"enabled_skills,omitempty"`
 	MaxTurns      int                  `yaml:"max_turns,omitempty"`
 	Sandbox       *cobot.SandboxConfig `yaml:"sandbox,omitempty"`
+	Session       *cobot.SessionConfig `yaml:"session,omitempty"`
 }
 
 func LoadAgentConfig(path string) (*AgentConfig, error) {

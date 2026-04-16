@@ -6,6 +6,7 @@ package bootstrap
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,6 +58,26 @@ func InitAgent(cfg *cobot.Config, requireProvider bool) (*Result, error) {
 	toolReg := tools.NewRegistry()
 	a := agent.New(cfg, toolReg)
 
+	if agentCfg != nil && agentCfg.Session != nil {
+		sc := cfg.Session
+		if agentCfg.Session.SummarizeThreshold > 0 {
+			sc.SummarizeThreshold = agentCfg.Session.SummarizeThreshold
+		}
+		if agentCfg.Session.CompressThreshold > 0 {
+			sc.CompressThreshold = agentCfg.Session.CompressThreshold
+		}
+		if agentCfg.Session.SummarizeTurns > 0 {
+			sc.SummarizeTurns = agentCfg.Session.SummarizeTurns
+		}
+		if agentCfg.Session.SummaryModel != "" {
+			sc.SummaryModel = agentCfg.Session.SummaryModel
+		}
+		a.SetSessionConfig(sc)
+	}
+
+	sessionStore := agent.NewSessionStore(ws.SessionsDir())
+	a.SetSessionStore(sessionStore)
+
 	if agentCfg != nil && agentCfg.SystemPrompt != "" {
 		prompt := resolveSystemPrompt(agentCfg.SystemPrompt, ws)
 		a.SetSystemPrompt(prompt)
@@ -71,7 +92,7 @@ func InitAgent(cfg *cobot.Config, requireProvider bool) (*Result, error) {
 		if requireProvider {
 			return nil, err
 		}
-		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+		slog.Warn("provider init failed", "err", err)
 	}
 
 	if err := ConfigureAgentForWorkspace(a, ws, registry); err != nil {
@@ -97,13 +118,13 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	// --- memory ---
 	if old := a.MemoryStore(); old != nil {
 		if err := old.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to close memory store: %v\n", err)
+			slog.Warn("failed to close memory store", "err", err)
 		}
 	}
 	dataDir := ws.MemoryDir()
 	store, err := memory.OpenStore(dataDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to open memory store: %v\n", err)
+		slog.Warn("failed to open memory store", "err", err)
 	} else {
 		a.SetMemoryStore(store)
 		a.SetMemoryRecall(store)
@@ -127,7 +148,12 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 			sandboxCfg.BlockedCommands = agentCfg.Sandbox.BlockedCommands
 		}
 	}
+	var virtualRoot string
+	if sandboxCfg.Root != "" {
+		virtualRoot = "/home/" + ws.Config.Name
+	}
 	sandbox := &cobot.SandboxConfig{
+		VirtualRoot:   virtualRoot,
 		Root:          sandboxCfg.Root,
 		AllowPaths:    sandboxCfg.AllowPaths,
 		ReadonlyPaths: sandboxCfg.ReadonlyPaths,
@@ -143,13 +169,16 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	))
 
 	// --- workspace tools ---
-	tools.RegisterWorkspaceTools(a.ToolRegistry(), ws)
+	tools.RegisterWorkspaceTools(a.ToolRegistry(), ws, sandbox)
 
 	// --- delegate tool ---
 	a.RegisterTool(tools.NewDelegateTool(func() cobot.SubAgent {
-		sub := agent.New(a.Config(), a.ToolRegistry().Clone())
-		sub.SetProvider(a.Provider())
+		cfg := *a.Config() // value copy to avoid mutating parent's config
+		sub := agent.New(&cfg, a.ToolRegistry().Clone())
 		sub.SetRegistry(registry)
+		if err := sub.SetModel(a.Model()); err != nil {
+			sub.SetProvider(a.Provider())
+		}
 		return sub
 	}))
 

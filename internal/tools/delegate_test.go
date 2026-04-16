@@ -23,6 +23,10 @@ func (m *mockSubAgent) Prompt(_ context.Context, _ string) (*cobot.ProviderRespo
 	return m.response, m.err
 }
 
+func (m *mockSubAgent) Stream(_ context.Context, _ string) (<-chan cobot.Event, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
 func TestDelegateTool_Name(t *testing.T) {
 	dt := NewDelegateTool(nil)
 	if dt.Name() != "delegate_task" {

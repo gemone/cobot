@@ -89,3 +89,14 @@ func (r *Registry) ExecuteParallel(ctx context.Context, calls []cobot.ToolCall) 
 	wg.Wait()
 	return results
 }
+
+func (r *Registry) IsStreamingTool(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	t, ok := r.tools[name]
+	if !ok {
+		return false
+	}
+	_, streaming := t.(cobot.StreamingTool)
+	return streaming
+}

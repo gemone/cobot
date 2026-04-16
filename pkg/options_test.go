@@ -81,3 +81,83 @@ func TestSandboxConfig_IsBlockedCommand(t *testing.T) {
 		t.Error("should block dd")
 	}
 }
+
+func TestSandboxConfig_ResolvePath_NoSandbox(t *testing.T) {
+	var s *SandboxConfig
+	path, err := s.ResolvePath("/any/path")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "/any/path" {
+		t.Errorf("expected /any/path, got %q", path)
+	}
+}
+
+func TestSandboxConfig_ResolvePath_EmptyVirtualRoot(t *testing.T) {
+	s := &SandboxConfig{Root: "/real"}
+	path, err := s.ResolvePath("/any/path")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "/any/path" {
+		t.Errorf("expected /any/path, got %q", path)
+	}
+}
+
+func TestSandboxConfig_ResolvePath_ValidPath(t *testing.T) {
+	s := &SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
+	path, err := s.ResolvePath("/home/ws/src/main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := filepath.Join("/tmp/real", "src/main.go")
+	if path != expected {
+		t.Errorf("expected %q, got %q", expected, path)
+	}
+}
+
+func TestSandboxConfig_ResolvePath_RootExactly(t *testing.T) {
+	s := &SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
+	path, err := s.ResolvePath("/home/ws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "/tmp/real" {
+		t.Errorf("expected /tmp/real, got %q", path)
+	}
+}
+
+func TestSandboxConfig_ResolvePath_TrailingSlash(t *testing.T) {
+	s := &SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
+	path, err := s.ResolvePath("/home/ws/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "/tmp/real" {
+		t.Errorf("expected /tmp/real, got %q", path)
+	}
+}
+
+func TestSandboxConfig_ResolvePath_Rejected(t *testing.T) {
+	s := &SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
+	_, err := s.ResolvePath("/etc/passwd")
+	if err == nil {
+		t.Error("expected error for path outside virtual root")
+	}
+}
+
+func TestSandboxConfig_ResolvePath_RelativeRejected(t *testing.T) {
+	s := &SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
+	_, err := s.ResolvePath("src/main.go")
+	if err == nil {
+		t.Error("expected error for relative path")
+	}
+}
+
+func TestSandboxConfig_ResolvePath_DotSlashRejected(t *testing.T) {
+	s := &SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
+	_, err := s.ResolvePath("./config.yaml")
+	if err == nil {
+		t.Error("expected error for dot-prefixed path")
+	}
+}

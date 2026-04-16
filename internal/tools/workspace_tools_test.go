@@ -6,10 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
 	"time"
 
 	"github.com/cobot-agent/cobot/internal/workspace"
+	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
 func newTestWorkspace(t *testing.T) *workspace.Workspace {
@@ -239,7 +239,7 @@ func TestPersonaUpdateTool_InvalidFile(t *testing.T) {
 func TestRegisterWorkspaceTools(t *testing.T) {
 	ws := newTestWorkspace(t)
 	registry := NewRegistry()
-	RegisterWorkspaceTools(registry, ws)
+	RegisterWorkspaceTools(registry, ws, nil)
 
 	tool, err := registry.Get("workspace_config_update")
 	if err != nil {
@@ -290,5 +290,23 @@ func TestWorkspaceConfigUpdateTool_SkillsUpdate(t *testing.T) {
 	}
 	if ws.Config.EnabledSkills[0] != "coding" || ws.Config.EnabledSkills[1] != "writing" {
 		t.Fatalf("unexpected enabled_skills: %v", ws.Config.EnabledSkills)
+	}
+}
+
+func TestWorkspaceConfigUpdateTool_SandboxRejectOutsidePath(t *testing.T) {
+	ws := newTestWorkspace(t)
+	if err := ws.SaveConfig(); err != nil {
+		t.Fatal(err)
+	}
+
+	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/test", Root: "/tmp/real"}
+	tool := &WorkspaceConfigUpdateTool{workspace: ws, sandbox: sandbox}
+
+	args, _ := json.Marshal(map[string]interface{}{
+		"sandbox_root": "/etc/evil",
+	})
+	_, err := tool.Execute(context.Background(), args)
+	if err == nil {
+		t.Error("expected error for sandbox_root outside virtual root")
 	}
 }

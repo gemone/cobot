@@ -26,6 +26,16 @@ func (r *testRegistry) Register(t cobot.Tool) {
 	r.tools[t.Name()] = t
 }
 
+func (r *testRegistry) Get(name string) (cobot.Tool, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	t, ok := r.tools[name]
+	if !ok {
+		return nil, fmt.Errorf("tool %q not found", name)
+	}
+	return t, nil
+}
+
 func (r *testRegistry) ToolDefs() []cobot.ToolDef {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -78,4 +88,15 @@ func (r *testRegistry) Clone() cobot.ToolRegistry {
 		cloned.tools[name] = t
 	}
 	return cloned
+}
+
+func (r *testRegistry) IsStreamingTool(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	t, ok := r.tools[name]
+	if !ok {
+		return false
+	}
+	_, streaming := t.(cobot.StreamingTool)
+	return streaming
 }

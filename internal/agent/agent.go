@@ -3,8 +3,11 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
@@ -30,6 +33,18 @@ func (s *Session) Messages() []cobot.Message {
 	return out
 }
 
+// MessagesSnapshot returns a copy of the current messages along with the
+// length at the time of the snapshot. This allows callers to later merge
+// any messages appended after the snapshot was taken.
+func (s *Session) MessagesSnapshot() ([]cobot.Message, int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	n := len(s.messages)
+	out := make([]cobot.Message, n)
+	copy(out, s.messages)
+	return out, n
+}
+
 func (s *Session) AddMessage(m cobot.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -50,31 +65,39 @@ func (s *Session) AddMessage(m cobot.Message) {
 // --- Agent ---
 
 type Agent struct {
-	config       *cobot.Config
-	provider     cobot.Provider
-	registry     cobot.ModelResolver
-	tools        cobot.ToolRegistry
-	session      *Session
-	memoryStore  cobot.MemoryStore
-	memoryRecall cobot.MemoryRecall
-	usageTracker *UsageTracker
-	systemPrompt string
-	sysPromptMu  sync.RWMutex
-	streamMu     sync.Mutex // serializes concurrent Stream calls
-	streamWg     sync.WaitGroup
-	agentCtx     context.Context
-	agentCancel  context.CancelFunc
+	config        *cobot.Config
+	sessionConfig cobot.SessionConfig
+	provider      cobot.Provider
+	registry      cobot.ModelResolver
+	tools         cobot.ToolRegistry
+	session       *Session
+	sessionID     string
+	sessionStore  *SessionStore
+	memoryStore   cobot.MemoryStore
+	memoryRecall  cobot.MemoryRecall
+	usageTracker  *UsageTracker
+	systemPrompt  string
+	sysPromptMu   sync.RWMutex
+	streamMu      sync.Mutex // serializes concurrent Stream calls
+	streamWg      sync.WaitGroup
+	agentCtx      context.Context
+	agentCancel   context.CancelFunc
+	turnCount     int
+	compressor    *Compressor
+	compressMu    sync.Mutex // prevents concurrent compression runs
 }
 
 func New(config *cobot.Config, toolRegistry cobot.ToolRegistry) *Agent {
 	agentCtx, agentCancel := context.WithCancel(context.Background())
 	return &Agent{
-		config:       config,
-		tools:        toolRegistry,
-		session:      NewSession(),
-		usageTracker: NewUsageTracker(),
-		agentCtx:     agentCtx,
-		agentCancel:  agentCancel,
+		config:        config,
+		sessionConfig: config.Session,
+		tools:         toolRegistry,
+		session:       NewSession(),
+		sessionID:     uuid.New().String(),
+		usageTracker:  NewUsageTracker(),
+		agentCtx:      agentCtx,
+		agentCancel:   agentCancel,
 	}
 }
 
@@ -106,6 +129,56 @@ func (a *Agent) Session() *Session {
 
 func (a *Agent) AddMessage(m cobot.Message) {
 	a.session.AddMessage(m)
+	a.persistMessage(m)
+}
+
+func (a *Agent) SetSessionStore(s *SessionStore) {
+	a.sessionStore = s
+}
+
+func (a *Agent) SetSessionConfig(sc cobot.SessionConfig) {
+	a.sessionConfig = sc
+}
+
+func (a *Agent) SessionConfig() cobot.SessionConfig {
+	return a.sessionConfig
+}
+
+func (a *Agent) SessionID() string {
+	return a.sessionID
+}
+
+func (a *Agent) persistSession() {
+	if a.sessionStore == nil {
+		return
+	}
+	if err := a.sessionStore.Save(a.sessionID, a.session, a.usageTracker.Get(), a.config.Model); err != nil {
+		slog.Debug("failed to persist session", "err", err)
+	}
+}
+
+// persistMessage appends a single message to the session JSONL file.
+func (a *Agent) persistMessage(m cobot.Message) {
+	if a.sessionStore == nil {
+		return
+	}
+	if err := a.sessionStore.InitSession(a.sessionID, a.config.Model); err != nil {
+		slog.Debug("failed to init session", "err", err)
+		return
+	}
+	if err := a.sessionStore.AppendMessage(a.sessionID, m); err != nil {
+		slog.Debug("failed to persist message", "err", err)
+	}
+}
+
+// PersistUsage appends a usage snapshot to the session JSONL file.
+func (a *Agent) PersistUsage() {
+	if a.sessionStore == nil {
+		return
+	}
+	if err := a.sessionStore.AppendUsage(a.sessionID, a.usageTracker.Get()); err != nil {
+		slog.Debug("failed to persist usage", "err", err)
+	}
 }
 
 func (a *Agent) RegisterTool(tool cobot.Tool) {
@@ -146,12 +219,27 @@ func (a *Agent) SetModel(modelSpec string) error {
 		if err != nil {
 			return err
 		}
+		if v, ok := p.(cobot.ModelValidator); ok {
+			if err := v.ValidateModel(a.agentCtx, modelName); err != nil {
+				return err
+			}
+		}
 		a.provider = p
 		a.config.Model = modelName
+		a.initCompressor()
 		return nil
 	}
 	a.config.Model = modelSpec
+	a.initCompressor()
 	return nil
+}
+
+func (a *Agent) initCompressor() {
+	if a.provider == nil {
+		return
+	}
+	ctxWindow := ContextWindowForModel(a.config.Model, nil)
+	a.compressor = NewCompressor(a.sessionConfig, ctxWindow, a.provider, a.config.Model)
 }
 
 func (a *Agent) Model() string {
@@ -166,23 +254,111 @@ func (a *Agent) ResetUsage() {
 	a.usageTracker.Reset()
 }
 
+func (a *Agent) checkAndCompress(ctx context.Context) {
+	if a.compressor == nil {
+		return
+	}
+
+	action := a.compressor.Check(a.usageTracker.Get(), a.turnCount)
+	if action == CompressNone {
+		return
+	}
+
+	msgs, snapshotLen := a.session.MessagesSnapshot()
+	slog.Debug("compression triggered", "action", action, "turns", a.turnCount, "total_tokens", a.usageTracker.Get().TotalTokens, "messages", len(msgs))
+
+	go a.runCompress(ctx, action, msgs, snapshotLen)
+}
+
+func (a *Agent) runCompress(ctx context.Context, action CompressAction, msgs []cobot.Message, snapshotLen int) {
+	if !a.compressMu.TryLock() {
+		slog.Debug("compression already in progress, skipping")
+		return
+	}
+	defer a.compressMu.Unlock()
+
+	switch action {
+	case CompressSummarize:
+		summary, kept, err := a.compressor.Summarize(ctx, msgs)
+		if err != nil {
+			slog.Debug("summarize failed", "err", err)
+			return
+		}
+		optimized, err := a.compressor.OptimizeSummary(ctx, summary, msgs)
+		if err == nil && optimized != "" {
+			summary = optimized
+		}
+		a.replaceSessionMessages(summary, kept, snapshotLen)
+		a.extractMemories(ctx, summary, msgs)
+
+	case CompressFull:
+		summary, err := a.compressor.Compress(ctx, msgs)
+		if err != nil {
+			slog.Debug("compress failed", "err", err)
+			return
+		}
+		optimized, err := a.compressor.OptimizeSummary(ctx, summary, msgs)
+		if err == nil && optimized != "" {
+			summary = optimized
+		}
+		a.replaceSessionMessages(summary, nil, snapshotLen)
+		a.extractMemories(ctx, summary, msgs)
+	}
+}
+
+func (a *Agent) replaceSessionMessages(summary string, kept []cobot.Message, snapshotLen int) {
+	a.session.mu.Lock()
+	defer a.session.mu.Unlock()
+
+	// Collect messages appended after the snapshot was taken so they aren't lost.
+	var postSnapshot []cobot.Message
+	if snapshotLen < len(a.session.messages) {
+		postSnapshot = make([]cobot.Message, len(a.session.messages)-snapshotLen)
+		copy(postSnapshot, a.session.messages[snapshotLen:])
+	}
+
+	var newMsgs []cobot.Message
+	if len(a.session.messages) > 0 && a.session.messages[0].Role == cobot.RoleSystem {
+		newMsgs = append(newMsgs, a.session.messages[0])
+	}
+
+	newMsgs = append(newMsgs, cobot.Message{
+		Role:    cobot.RoleAssistant,
+		Content: fmt.Sprintf("[Previous conversation summary]\n%s", summary),
+	})
+	newMsgs = append(newMsgs, kept...)
+	newMsgs = append(newMsgs, postSnapshot...)
+	originalCount := len(a.session.messages)
+	a.session.messages = newMsgs
+
+	newUsage := estimateMessagesUsage(newMsgs)
+	a.usageTracker.Set(newUsage)
+
+	if a.sessionStore != nil {
+		a.sessionStore.AppendCompact(a.sessionID, CompactMarker{
+			Summary:       summary,
+			OriginalCount: originalCount,
+		})
+		a.PersistUsage()
+	}
+
+	slog.Debug("session compressed", "original_msgs", originalCount, "new_msgs", len(newMsgs), "new_tokens", newUsage.TotalTokens)
+}
+
 // deriveCtx returns a context derived from agentCtx that also cancels if the
 // supplied ctx cancels. This ensures that agent-level cancellation (via Close)
 // propagates into all in-flight Prompt/Stream calls.
 func (a *Agent) deriveCtx(ctx context.Context) context.Context {
 	derived, derivedCancel := context.WithCancel(a.agentCtx)
 
-	if ctx.Err() != nil {
-		derivedCancel()
-	} else {
-		context.AfterFunc(ctx, derivedCancel)
-	}
-
-	if a.agentCtx.Err() != nil {
-		derivedCancel()
-	} else {
-		context.AfterFunc(a.agentCtx, derivedCancel)
-	}
+	go func() {
+		select {
+		case <-ctx.Done():
+			derivedCancel()
+		case <-a.agentCtx.Done():
+			derivedCancel()
+		}
+	}()
 
 	return derived
 }
