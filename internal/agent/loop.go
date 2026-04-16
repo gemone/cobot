@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	cobot "github.com/cobot-agent/cobot/pkg"
+	"github.com/cobot-agent/cobot/internal/memory"
 )
 
 func (a *Agent) buildRequest(ctx context.Context) *cobot.ProviderRequest {
@@ -41,6 +42,9 @@ func (a *Agent) runLoop(ctx context.Context, prompt, debugLabel string, executeT
 	slog.Debug("session", "event", debugLabel, "prompt", prompt)
 	a.AddMessage(cobot.Message{Role: cobot.RoleUser, Content: prompt})
 
+	// Store initial user message as STM context.
+	a.storeTurnSTM(ctx, prompt, "", nil)
+
 	for turn := 0; turn < a.config.MaxTurns; turn++ {
 		req := a.buildRequest(ctx)
 		slog.Debug("agent turn", "event", debugLabel, "turn", turn, "model", req.Model, "msgs", len(req.Messages), "tools", len(req.Tools))
@@ -53,12 +57,35 @@ func (a *Agent) runLoop(ctx context.Context, prompt, debugLabel string, executeT
 		a.turnCount++
 		a.checkAndCompress(ctx)
 
+		if a.stmPromoteInterval > 0 && a.turnCount%a.stmPromoteInterval == 0 {
+			a.promoteSTMBackground(ctx)
+		}
+
 		if stop {
 			return nil
 		}
 	}
 
 	return cobot.ErrMaxTurnsExceeded
+}
+
+// storeTurnSTM extracts and stores short-term memory items from the current
+// conversation turn. It is a no-op when the memory store does not implement
+// ShortTermMemory.
+func (a *Agent) storeTurnSTM(ctx context.Context, userMsg, assistantMsg string, toolResults []string) {
+	if a.memoryStore == nil {
+		return
+	}
+	stm, ok := a.memoryStore.(cobot.ShortTermMemory)
+	if !ok {
+		return
+	}
+	items := memory.ExtractSTM(userMsg, assistantMsg, toolResults)
+	for _, item := range items {
+		if _, err := stm.StoreShortTerm(ctx, a.sessionID, item.Content, item.Category); err != nil {
+			slog.Debug("stm store failed", "err", err)
+		}
+	}
 }
 
 func (a *Agent) Prompt(ctx context.Context, message string) (*cobot.ProviderResponse, error) {
@@ -94,11 +121,23 @@ func (a *Agent) Prompt(ctx context.Context, message string) (*cobot.ProviderResp
 		})
 
 		if len(resp.ToolCalls) == 0 {
+			// Final response — store STM for this turn.
+			a.storeTurnSTM(ctx, "", resp.Content, nil)
 			result = resp
 			return true, nil
 		}
 
-		a.executeToolsAndCollect(ctx, resp.ToolCalls)
+		toolResults := a.executeToolsAndCollect(ctx, resp.ToolCalls)
+		// Collect tool result outputs for STM.
+		var resultOutputs []string
+		for _, tr := range toolResults {
+			if tr.Error != "" {
+				resultOutputs = append(resultOutputs, "Error: "+tr.Error)
+			} else {
+				resultOutputs = append(resultOutputs, tr.Output)
+			}
+		}
+		a.storeTurnSTM(ctx, "", resp.Content, resultOutputs)
 		return false, nil
 	})
 
@@ -177,6 +216,8 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 					}
 					a.usageTracker.Add(turnUsage)
 					a.PersistUsage()
+					// Final response — store STM for this turn.
+					a.storeTurnSTM(ctx, "", content, nil)
 					sendEvent(cobot.Event{Type: cobot.EventDone, Done: true, Usage: &turnUsage})
 					return true, nil
 				}
@@ -277,6 +318,10 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 					a.AddMessage(cobot.Message{Role: cobot.RoleTool, ToolResult: tr})
 				}
 			}
+
+			// Store STM for assistant response + tool results.
+			a.storeTurnSTM(ctx, "", content, nil)
+
 			return false, nil
 		})
 

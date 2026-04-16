@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -15,9 +16,18 @@ func (s *Store) WakeUp(ctx context.Context) (string, error) {
 func (s *Store) WakeUpWithDeepSearch(ctx context.Context, deepSearch bool) (string, error) {
 	identity := cobot.DefaultSystemPrompt
 
-	wings, err := s.GetWings(ctx)
+	allWings, err := s.GetWings(ctx)
 	if err != nil {
 		return "", err
+	}
+
+	// Filter out STM wings — sessions only see their own STM (via WakeUpSTM),
+	// and LTM should not leak ephemeral data from other sessions.
+	wings := make([]*cobot.Wing, 0, len(allWings))
+	for _, w := range allWings {
+		if !strings.HasPrefix(w.Name, stmWingPrefix) {
+			wings = append(wings, w)
+		}
 	}
 
 	var sections []string
@@ -118,4 +128,75 @@ func (s *Store) collectRoomRecall(ctx context.Context, wings []*cobot.Wing) []st
 		}
 	}
 	return contexts
+}
+
+// WakeUpSTM returns short-term memory context for the current session,
+// grouped by the five STM rooms (context, todo, notes, observation, compressed).
+// This should be called every turn to get fresh STM context.
+// It returns an empty string if there are no STM items.
+func (s *Store) WakeUpSTM(ctx context.Context, sessionID string) (string, error) {
+	wing, err := s.GetWingByName(ctx, stmWingName(sessionID))
+	if err != nil || wing == nil {
+		return "", nil
+	}
+
+	rooms, err := s.GetRooms(ctx, wing.ID)
+	if err != nil {
+		return "", err
+	}
+
+	// Define the order and labels for STM rooms.
+	roomOrder := []struct {
+		name  string
+		label string
+	}{
+		{stmRoomContext, "Context"},
+		{stmRoomTodo, "TODO"},
+		{stmRoomNotes, "Notes"},
+		{stmRoomObservation, "Observations"},
+		{stmRoomCompressed, "Session Summary"},
+	}
+
+	// Index rooms by name for quick lookup.
+	roomByName := make(map[string]*cobot.Room)
+	for _, room := range rooms {
+		roomByName[room.Name] = room
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "## Short-Term Memory (Session %s)\n", sessionID)
+
+	hasContent := false
+
+	for _, ro := range roomOrder {
+		room, ok := roomByName[ro.name]
+		if !ok {
+			continue
+		}
+
+		rows, err := s.db.QueryContext(ctx, sqlSelectDrawersByRoomOrdered, room.ID)
+		if err != nil {
+			continue
+		}
+		var count int
+		for rows.Next() {
+			var d cobot.Drawer
+			if err := rows.Scan(&d.ID, &d.RoomID, &d.Content, &d.CreatedAt); err != nil {
+				rows.Close()
+				continue
+			}
+			if count == 0 {
+				fmt.Fprintf(&b, "### %s\n", ro.label)
+				hasContent = true
+			}
+			fmt.Fprintf(&b, "- %s\n", d.Content)
+			count++
+		}
+		rows.Close()
+	}
+
+	if !hasContent {
+		return "", nil
+	}
+	return b.String(), nil
 }

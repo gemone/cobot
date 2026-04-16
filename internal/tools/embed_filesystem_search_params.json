@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "properties": {
+    "path": {
+      "type": "string",
+      "description": "Root directory to search from"
+    },
+    "pattern": {
+      "type": "string",
+      "description": "File name pattern or glob to search for (e.g. *.go, README*)"
+    }
+  },
+  "required": ["path", "pattern"]
+}

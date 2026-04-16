@@ -116,13 +116,19 @@ func TestReadFileTool_SandboxRejectOutside(t *testing.T) {
 func TestReadFileTool_SandboxRejectRelative(t *testing.T) {
 	dir := t.TempDir()
 	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/test", Root: dir}
+	os.MkdirAll(filepath.Join(dir, "src"), 0755)
+	os.WriteFile(filepath.Join(dir, "src", "main.go"), []byte("package main"), 0644)
 
 	tool := NewReadFileTool(WithReadSandbox(sandbox))
 
+	// Relative paths are now auto-resolved under VirtualRoot, so this should succeed
 	args, _ := json.Marshal(map[string]string{"path": "src/main.go"})
-	_, err := tool.Execute(context.Background(), args)
-	if err == nil {
-		t.Error("expected error for relative path")
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != "package main" {
+		t.Errorf("expected 'package main', got %s", result)
 	}
 }
 
@@ -211,25 +217,11 @@ func TestShellExecTool_SandboxRewriteDir(t *testing.T) {
 	}
 	result = strings.TrimSpace(strings.ReplaceAll(result, "\r\n", "\n"))
 
-	// Resolve symlinks for comparison (macOS /var → /private/var)
-	expected, err := filepath.Abs(sub)
-	if err != nil {
-		t.Fatal(err)
-	}
-	expected, err = filepath.EvalSymlinks(expected)
-	if err != nil {
-		t.Fatal(err)
-	}
-	actual, err := filepath.Abs(result)
-	if err != nil {
-		t.Fatal(err)
-	}
-	actual, err = filepath.EvalSymlinks(actual)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if actual != expected {
-		t.Errorf("expected %q, got %q", expected, actual)
+	// With RewriteOutputPaths, the real path in output should be replaced
+	// with the virtual path. pwd returns the real dir, which gets rewritten.
+	expected := "/home/test/subdir"
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
 	}
 }
 

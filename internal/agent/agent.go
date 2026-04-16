@@ -65,39 +65,41 @@ func (s *Session) AddMessage(m cobot.Message) {
 // --- Agent ---
 
 type Agent struct {
-	config        *cobot.Config
-	sessionConfig cobot.SessionConfig
-	provider      cobot.Provider
-	registry      cobot.ModelResolver
-	tools         cobot.ToolRegistry
-	session       *Session
-	sessionID     string
-	sessionStore  *SessionStore
-	memoryStore   cobot.MemoryStore
-	memoryRecall  cobot.MemoryRecall
-	usageTracker  *UsageTracker
-	systemPrompt  string
-	sysPromptMu   sync.RWMutex
-	streamMu      sync.Mutex // serializes concurrent Stream calls
-	streamWg      sync.WaitGroup
-	agentCtx      context.Context
-	agentCancel   context.CancelFunc
-	turnCount     int
-	compressor    *Compressor
-	compressMu    sync.Mutex // prevents concurrent compression runs
+	config             *cobot.Config
+	sessionConfig      cobot.SessionConfig
+	provider           cobot.Provider
+	registry           cobot.ModelResolver
+	tools              cobot.ToolRegistry
+	session            *Session
+	sessionID          string
+	sessionStore       *SessionStore
+	memoryStore        cobot.MemoryStore
+	memoryRecall       cobot.MemoryRecall
+	usageTracker       *UsageTracker
+	systemPrompt       string
+	sysPromptMu        sync.RWMutex
+	streamMu           sync.Mutex // serializes concurrent Stream calls
+	streamWg           sync.WaitGroup
+	agentCtx           context.Context
+	agentCancel        context.CancelFunc
+	turnCount          int
+	compressor         *Compressor
+	compressMu         sync.Mutex // prevents concurrent compression runs
+	stmPromoteInterval int        // turns between STM promotions (0 = disabled)
 }
 
 func New(config *cobot.Config, toolRegistry cobot.ToolRegistry) *Agent {
 	agentCtx, agentCancel := context.WithCancel(context.Background())
 	return &Agent{
-		config:        config,
-		sessionConfig: config.Session,
-		tools:         toolRegistry,
-		session:       NewSession(),
-		sessionID:     uuid.New().String(),
-		usageTracker:  NewUsageTracker(),
-		agentCtx:      agentCtx,
-		agentCancel:   agentCancel,
+		config:             config,
+		sessionConfig:      config.Session,
+		tools:              toolRegistry,
+		session:            NewSession(),
+		sessionID:          uuid.New().String(),
+		usageTracker:       NewUsageTracker(),
+		agentCtx:           agentCtx,
+		agentCancel:        agentCancel,
+		stmPromoteInterval: 10,
 	}
 }
 
@@ -271,6 +273,22 @@ func (a *Agent) checkAndCompress(ctx context.Context) {
 	go a.runCompress(ctx, action, msgs, snapshotLen)
 }
 
+// promoteSTMBackground triggers an asynchronous STM→LTM promotion.
+func (a *Agent) promoteSTMBackground(ctx context.Context) {
+	if a.memoryStore == nil {
+		return
+	}
+	stm, ok := a.memoryStore.(cobot.ShortTermMemory)
+	if !ok {
+		return
+	}
+	go func() {
+		if err := stm.SummarizeAndPromoteSTM(ctx, a.sessionID); err != nil {
+			slog.Debug("periodic STM promotion failed", "err", err)
+		}
+	}()
+}
+
 func (a *Agent) runCompress(ctx context.Context, action CompressAction, msgs []cobot.Message, snapshotLen int) {
 	if !a.compressMu.TryLock() {
 		slog.Debug("compression already in progress, skipping")
@@ -291,6 +309,12 @@ func (a *Agent) runCompress(ctx context.Context, action CompressAction, msgs []c
 		}
 		a.replaceSessionMessages(summary, kept, snapshotLen)
 		a.extractMemories(ctx, summary, msgs)
+		// Store compression summary in STM compressed room.
+		if stm, ok := a.memoryStore.(cobot.ShortTermMemory); ok {
+			if _, err := stm.StoreShortTermCompressed(ctx, a.sessionID, summary); err != nil {
+				slog.Debug("stm compressed store failed", "err", err)
+			}
+		}
 
 	case CompressFull:
 		summary, err := a.compressor.Compress(ctx, msgs)
@@ -304,6 +328,12 @@ func (a *Agent) runCompress(ctx context.Context, action CompressAction, msgs []c
 		}
 		a.replaceSessionMessages(summary, nil, snapshotLen)
 		a.extractMemories(ctx, summary, msgs)
+		// Store compression summary in STM compressed room.
+		if stm, ok := a.memoryStore.(cobot.ShortTermMemory); ok {
+			if _, err := stm.StoreShortTermCompressed(ctx, a.sessionID, summary); err != nil {
+				slog.Debug("stm compressed store failed", "err", err)
+			}
+		}
 	}
 }
 
@@ -381,7 +411,16 @@ func (a *Agent) Close() error {
 		// Force proceed after timeout rather than blocking indefinitely.
 	}
 
+	// Promote valuable STM items to LTM before closing the memory store.
 	if a.memoryStore != nil {
+		if stm, ok := a.memoryStore.(cobot.ShortTermMemory); ok {
+			go func() {
+				_ = stm.PromoteToLongTerm(context.Background(), a.sessionID)
+				_ = stm.ClearShortTerm(context.Background(), a.sessionID)
+			}()
+		}
+		// Give background promotion a moment to finish.
+		time.Sleep(100 * time.Millisecond)
 		if err := a.memoryStore.Close(); err != nil {
 			return fmt.Errorf("close memory store: %w", err)
 		}
@@ -391,13 +430,39 @@ func (a *Agent) Close() error {
 
 // --- Context / prompt helpers ---
 
+// buildMessages assembles the message list for the LLM, prepending the system
+// prompt (cached LTM + fresh STM) as the first message.
 func (a *Agent) buildMessages(ctx context.Context) []cobot.Message {
 	msgs := a.session.Messages()
 	system := a.getSystemPrompt(ctx)
 	if system == "" {
 		return msgs
 	}
+
+	// Append STM context on every turn (not cached like LTM).
+	stmText := a.getSTMContext(ctx)
+	if stmText != "" {
+		system = system + "\n\n" + stmText
+	}
+
 	return append([]cobot.Message{{Role: cobot.RoleSystem, Content: system}}, msgs...)
+}
+
+// getSTMContext returns short-term memory text for the current session,
+// refreshed every turn.
+func (a *Agent) getSTMContext(ctx context.Context) string {
+	if a.memoryStore == nil {
+		return ""
+	}
+	stm, ok := a.memoryStore.(cobot.ShortTermMemory)
+	if !ok {
+		return ""
+	}
+	text, err := stm.WakeUpSTM(ctx, a.sessionID)
+	if err != nil {
+		return ""
+	}
+	return text
 }
 
 func (a *Agent) getSystemPrompt(ctx context.Context) string {

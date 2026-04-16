@@ -85,6 +85,38 @@ func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
 	return false
 }
 
+// AutoResolvePath attempts to resolve a path to a real filesystem path within the sandbox.
+// Unlike ResolvePath (which is strict), AutoResolvePath is lenient:
+//   - If path starts with VirtualRoot: validates and translates (same as ResolvePath)
+//   - If path is relative: auto-prepends VirtualRoot, then translates
+//   - If path is absolute but NOT VirtualRoot: rejects with clear error message
+//
+// This allows tools to accept relative paths from the LLM and auto-resolve them,
+// while still rejecting absolute paths that fall outside the sandbox virtual root.
+// Returns an error only if the resulting path escapes the sandbox root.
+func (s *SandboxConfig) AutoResolvePath(path string) (string, error) {
+	if s == nil || s.VirtualRoot == "" {
+		return path, nil
+	}
+
+	cleaned := filepath.Clean(path)
+	vr := filepath.Clean(s.VirtualRoot)
+
+	// Case 1: Already starts with VirtualRoot — delegate to strict ResolvePath
+	if cleaned == vr || strings.HasPrefix(cleaned, vr+"/") {
+		return s.ResolvePath(path)
+	}
+
+	// Case 2: Relative path — auto-prepend VirtualRoot
+	if !strings.HasPrefix(cleaned, "/") {
+		virtualPath := vr + "/" + cleaned
+		return s.ResolvePath(virtualPath)
+	}
+
+	// Case 3: Absolute path outside VirtualRoot — reject with clear message
+	return "", fmt.Errorf("path %q is absolute but does not start with %q; use a path starting with %q or a relative path (relative paths are auto-resolved under %q)", path, s.VirtualRoot, s.VirtualRoot, s.VirtualRoot)
+}
+
 // ResolvePath validates that path starts with VirtualRoot and translates it to the real filesystem path.
 // Returns an error if the path does not start with VirtualRoot when VirtualRoot is set.
 // If VirtualRoot is empty, returns the path unchanged (no sandbox enforcement).
@@ -119,6 +151,44 @@ func (s *SandboxConfig) RewritePaths(text string) string {
 		return text
 	}
 	return strings.ReplaceAll(text, s.VirtualRoot, s.Root)
+}
+
+// RewriteOutputPaths replaces real filesystem paths in text with virtual paths.
+// This is the reverse of RewritePaths. Used to sanitize tool output before sending to LLM.
+// Handles symlink differences (e.g. /var → /private/var on macOS) by resolving both.
+func (s *SandboxConfig) RewriteOutputPaths(text string) string {
+	if s == nil || s.VirtualRoot == "" || s.Root == "" {
+		return text
+	}
+	// Try resolved (symlink-expanded) root first — it's typically longer and more specific.
+	resolvedRoot := EvalSymlinks(s.Root)
+	result := strings.ReplaceAll(text, resolvedRoot, s.VirtualRoot)
+	// Also try the original (unresolved) root in case the output uses it directly.
+	if resolvedRoot != s.Root {
+		result = strings.ReplaceAll(result, s.Root, s.VirtualRoot)
+	}
+	return result
+}
+
+// RealToVirtual converts a real filesystem path back to the virtual path
+// that the LLM sees. If sandbox is not configured, returns the path unchanged.
+func (s *SandboxConfig) RealToVirtual(realPath string) string {
+	if s == nil || s.VirtualRoot == "" || s.Root == "" {
+		return realPath
+	}
+	absPath, err := filepath.Abs(realPath)
+	if err != nil {
+		return realPath
+	}
+	absRoot := filepath.Clean(s.Root)
+	if absPath == absRoot {
+		return s.VirtualRoot
+	}
+	if strings.HasPrefix(absPath, absRoot+string(filepath.Separator)) {
+		rel := strings.TrimPrefix(absPath, absRoot+string(filepath.Separator))
+		return filepath.Join(s.VirtualRoot, rel)
+	}
+	return realPath
 }
 
 func (s *SandboxConfig) IsBlockedCommand(cmd string) bool {

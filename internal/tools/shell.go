@@ -85,7 +85,7 @@ func (t *ShellExecTool) Name() string {
 func (t *ShellExecTool) Description() string {
 	desc := "Execute a shell command and return its output."
 	if t.config != nil && t.config.VirtualRoot != "" {
-		desc += fmt.Sprintf(" Working directory: %s — all file paths must start with %q.", t.config.VirtualRoot, t.config.VirtualRoot)
+		desc += fmt.Sprintf(" Working directory: %s — paths MUST start with %q. Relative paths are auto-resolved.", t.config.VirtualRoot, t.config.VirtualRoot)
 	} else if t.workdir != "" {
 		desc += fmt.Sprintf(" Working directory: %s — all relative paths resolve from here.", t.workdir)
 	}
@@ -168,13 +168,20 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		cmd.Dir = t.workdir
 	}
 	out, err := cmd.CombinedOutput()
+	output := string(out)
+
+	// Rewrite real filesystem paths in output back to virtual paths for LLM.
+	if t.config != nil && t.config.VirtualRoot != "" {
+		output = t.config.RewriteOutputPaths(output)
+	}
+
 	if ctx.Err() == context.DeadlineExceeded {
-		return string(out), fmt.Errorf("shell command timed out after %s", t.timeout)
+		return output, fmt.Errorf("shell command timed out after %s", t.timeout)
 	}
 	if err != nil {
-		return string(out), err
+		return output, err
 	}
-	return string(out), nil
+	return output, nil
 }
 
 // checkNetworkCommand validates that the command does not use network tools when networking is disabled.

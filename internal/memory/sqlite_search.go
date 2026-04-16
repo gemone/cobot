@@ -19,9 +19,10 @@ var searchTemplates = template.Must(
 
 // searchTmplData holds the conditional flags for SQL template rendering.
 type searchTmplData struct {
-	Tier1 bool
-	Tier2 bool
-	Tag   bool
+	Tier1     bool
+	Tier2     bool
+	Tag       bool
+	ExcludeSTM bool
 }
 
 // renderSearchSQL renders a named section from search.sql.tmpl.
@@ -69,9 +70,10 @@ func (s *Store) searchDrawers(ctx context.Context, query *cobot.SearchQuery) ([]
 	}
 
 	data := searchTmplData{
-		Tier1: query.Tier1 != "",
-		Tier2: query.Tier2 != "",
-		Tag:   query.Tag != "",
+		Tier1:      query.Tier1 != "",
+		Tier2:      query.Tier2 != "",
+		Tag:        query.Tag != "",
+		ExcludeSTM: true,
 	}
 	sql := renderSearchSQL("search_drawers", data)
 
@@ -107,9 +109,10 @@ func (s *Store) searchDrawers(ctx context.Context, query *cobot.SearchQuery) ([]
 // listDrawers returns recent drawers without full-text search.
 func (s *Store) listDrawers(ctx context.Context, query *cobot.SearchQuery, limit int) ([]*cobot.SearchResult, error) {
 	data := searchTmplData{
-		Tier1: query.Tier1 != "",
-		Tier2: query.Tier2 != "",
-		Tag:   query.Tag != "",
+		Tier1:      query.Tier1 != "",
+		Tier2:      query.Tier2 != "",
+		Tag:        query.Tag != "",
+		ExcludeSTM: true,
 	}
 	sql := renderSearchSQL("list_drawers", data)
 

@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "properties": {
+    "path": {
+      "type": "string",
+      "description": "Directory path to list"
+    },
+    "pattern": {
+      "type": "string",
+      "description": "Optional glob pattern to filter files (e.g. *.go, *.md)"
+    }
+  },
+  "required": ["path"]
+}

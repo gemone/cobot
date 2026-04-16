@@ -84,3 +84,16 @@ type MemoryStore interface {
 type MemoryRecall interface {
 	WakeUp(ctx context.Context) (string, error)
 }
+
+// ShortTermMemory handles per-session ephemeral memory that is injected into
+// every turn and cleaned up when the session ends. The memory store
+// (*memory.Store) implements this interface alongside MemoryStore and
+// MemoryRecall.
+type ShortTermMemory interface {
+	StoreShortTerm(ctx context.Context, sessionID, content, category string) (string, error)
+	WakeUpSTM(ctx context.Context, sessionID string) (string, error)
+	ClearShortTerm(ctx context.Context, sessionID string) error
+	PromoteToLongTerm(ctx context.Context, sessionID string) error
+	StoreShortTermCompressed(ctx context.Context, sessionID, content string) (string, error)
+	SummarizeAndPromoteSTM(ctx context.Context, sessionID string) error
+}
