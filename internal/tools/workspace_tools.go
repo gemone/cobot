@@ -100,11 +100,16 @@ type skillCreateArgs struct {
 
 type SkillCreateTool struct {
 	workspace *workspace.Workspace
+	sandbox   *cobot.SandboxConfig
 }
 
 func (t *SkillCreateTool) Name() string { return "skill_create" }
 func (t *SkillCreateTool) Description() string {
-	return "Create a new skill in the workspace skills directory"
+	desc := "Create a new skill in the workspace skills directory"
+	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
+		desc += fmt.Sprintf(". Files are stored under %s/skills/", t.sandbox.VirtualRoot)
+	}
+	return desc
 }
 
 func (t *SkillCreateTool) Parameters() json.RawMessage {
@@ -134,13 +139,13 @@ func (t *SkillCreateTool) Execute(ctx context.Context, args json.RawMessage) (st
 
 	dir := t.workspace.SkillsDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", fmt.Errorf("create skills dir: %w", err)
+		return "", sandboxRewriteErr(t.sandbox, fmt.Errorf("create skills dir: %w", err))
 	}
 
 	filename := fmt.Sprintf("%s.%s", a.Name, ext)
 	path := filepath.Join(dir, filename)
 	if err := os.WriteFile(path, []byte(a.Content), 0644); err != nil {
-		return "", fmt.Errorf("write skill file: %w", err)
+		return "", sandboxRewriteErr(t.sandbox, fmt.Errorf("write skill file: %w", err))
 	}
 	return fmt.Sprintf("skill created: %s", filename), nil
 }
@@ -152,10 +157,17 @@ type personaUpdateArgs struct {
 
 type PersonaUpdateTool struct {
 	workspace *workspace.Workspace
+	sandbox   *cobot.SandboxConfig
 }
 
-func (t *PersonaUpdateTool) Name() string        { return "persona_update" }
-func (t *PersonaUpdateTool) Description() string { return "Update SOUL.md or USER.md persona files" }
+func (t *PersonaUpdateTool) Name() string { return "persona_update" }
+func (t *PersonaUpdateTool) Description() string {
+	desc := "Update SOUL.md or USER.md persona files"
+	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
+		desc += fmt.Sprintf(". Files are stored under %s/", t.sandbox.VirtualRoot)
+	}
+	return desc
+}
 
 func (t *PersonaUpdateTool) Parameters() json.RawMessage {
 	return json.RawMessage(personaUpdateParamsJSON)
@@ -182,18 +194,23 @@ func (t *PersonaUpdateTool) Execute(ctx context.Context, args json.RawMessage) (
 	}
 
 	if err := os.WriteFile(path, []byte(a.Content), 0644); err != nil {
-		return "", fmt.Errorf("write persona file: %w", err)
+		return "", sandboxRewriteErr(t.sandbox, fmt.Errorf("write persona file: %w", err))
 	}
 	return fmt.Sprintf("%s updated", strings.ToLower(a.File)), nil
 }
 
 type AgentConfigUpdateTool struct {
 	workspace *workspace.Workspace
+	sandbox   *cobot.SandboxConfig
 }
 
 func (t *AgentConfigUpdateTool) Name() string { return "agent_config_update" }
 func (t *AgentConfigUpdateTool) Description() string {
-	return "Update an agent's configuration file in the workspace"
+	desc := "Update an agent's configuration file in the workspace"
+	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
+		desc += fmt.Sprintf(". Config files are stored under %s/agents/", t.sandbox.VirtualRoot)
+	}
+	return desc
 }
 
 func (t *AgentConfigUpdateTool) Parameters() json.RawMessage {
@@ -219,7 +236,7 @@ func (t *AgentConfigUpdateTool) Execute(ctx context.Context, args json.RawMessag
 	path := filepath.Join(t.workspace.AgentsDir(), params.Agent+".yaml")
 	cfg, err := config.LoadAgentConfig(path)
 	if err != nil {
-		return "", fmt.Errorf("load agent config: %w", err)
+		return "", sandboxRewriteErr(t.sandbox, fmt.Errorf("load agent config: %w", err))
 	}
 
 	if params.Model != nil {
@@ -239,18 +256,23 @@ func (t *AgentConfigUpdateTool) Execute(ctx context.Context, args json.RawMessag
 	}
 
 	if err := config.SaveYAML(path, cfg); err != nil {
-		return "", fmt.Errorf("save agent config: %w", err)
+		return "", sandboxRewriteErr(t.sandbox, fmt.Errorf("save agent config: %w", err))
 	}
 	return fmt.Sprintf("agent config updated: %s", params.Agent), nil
 }
 
 type SkillUpdateTool struct {
 	workspace *workspace.Workspace
+	sandbox   *cobot.SandboxConfig
 }
 
 func (t *SkillUpdateTool) Name() string { return "skill_update" }
 func (t *SkillUpdateTool) Description() string {
-	return "Update an existing skill in the workspace skills directory"
+	desc := "Update an existing skill in the workspace skills directory"
+	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
+		desc += fmt.Sprintf(". Files are stored under %s/skills/", t.sandbox.VirtualRoot)
+	}
+	return desc
 }
 
 func (t *SkillUpdateTool) Parameters() json.RawMessage {
@@ -283,17 +305,27 @@ func (t *SkillUpdateTool) Execute(ctx context.Context, args json.RawMessage) (st
 	}
 
 	if err := os.WriteFile(found, []byte(params.Content), 0644); err != nil {
-		return "", fmt.Errorf("write skill file: %w", err)
+		return "", sandboxRewriteErr(t.sandbox, fmt.Errorf("write skill file: %w", err))
 	}
 	return fmt.Sprintf("skill updated: %s", filepath.Base(found)), nil
 }
 
 func RegisterWorkspaceTools(registry cobot.ToolRegistry, ws *workspace.Workspace, sandbox *cobot.SandboxConfig) {
 	registry.Register(&WorkspaceConfigUpdateTool{workspace: ws, sandbox: sandbox})
-	registry.Register(&SkillCreateTool{workspace: ws})
-	registry.Register(&PersonaUpdateTool{workspace: ws})
-	registry.Register(&AgentConfigUpdateTool{workspace: ws})
-	registry.Register(&SkillUpdateTool{workspace: ws})
+	registry.Register(&SkillCreateTool{workspace: ws, sandbox: sandbox})
+	registry.Register(&PersonaUpdateTool{workspace: ws, sandbox: sandbox})
+	registry.Register(&AgentConfigUpdateTool{workspace: ws, sandbox: sandbox})
+	registry.Register(&SkillUpdateTool{workspace: ws, sandbox: sandbox})
+}
+
+// sandboxRewriteErr wraps err so that any real filesystem paths in its message
+// are replaced with virtual paths.  If sandbox is nil or inactive, err is
+// returned unchanged.
+func sandboxRewriteErr(sandbox *cobot.SandboxConfig, err error) error {
+	if sandbox == nil || sandbox.VirtualRoot == "" {
+		return err
+	}
+	return fmt.Errorf("%s", sandbox.RewriteOutputPaths(err.Error()))
 }
 
 var (
