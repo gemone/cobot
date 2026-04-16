@@ -101,10 +101,11 @@ func New(config *cobot.Config, toolRegistry cobot.ToolRegistry) *Agent {
 	}
 }
 
-func (a *Agent) SetSystemPrompt(prompt string) {
+func (a *Agent) SetSystemPrompt(prompt string) error {
 	a.sysPromptMu.Lock()
 	defer a.sysPromptMu.Unlock()
 	a.systemPrompt = prompt
+	return nil
 }
 
 func (a *Agent) SetProvider(p cobot.Provider) {

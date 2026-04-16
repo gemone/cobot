@@ -76,6 +76,20 @@ func TestRegistryGetNotFound(t *testing.T) {
 	}
 }
 
+func TestRegistry_Without(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&mockTool{name: "keep", description: "keep me", parameters: json.RawMessage(`{"type":"object"}`)})
+	r.Register(&mockTool{name: "drop", description: "drop me", parameters: json.RawMessage(`{"type":"object"}`)})
+
+	filtered := r.Without("drop")
+	if _, err := filtered.Get("keep"); err != nil {
+		t.Fatalf("expected keep to exist: %v", err)
+	}
+	if _, err := filtered.Get("drop"); err == nil {
+		t.Fatal("expected drop to be removed")
+	}
+}
+
 func TestExecuteTool(t *testing.T) {
 	r := NewRegistry()
 	r.Register(&mockTool{

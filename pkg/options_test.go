@@ -161,3 +161,52 @@ func TestSandboxConfig_ResolvePath_DotSlashRejected(t *testing.T) {
 		t.Error("expected error for dot-prefixed path")
 	}
 }
+
+func TestSandboxConfig_RewritePaths_NilReceiver(t *testing.T) {
+	var s *SandboxConfig
+	got := s.RewritePaths("hello /home/ws/file.txt")
+	if got != "hello /home/ws/file.txt" {
+		t.Errorf("expected unchanged, got %q", got)
+	}
+}
+
+func TestSandboxConfig_RewritePaths_EmptyVirtualRoot(t *testing.T) {
+	s := &SandboxConfig{Root: "/tmp/real"}
+	got := s.RewritePaths("hello /home/ws/file.txt")
+	if got != "hello /home/ws/file.txt" {
+		t.Errorf("expected unchanged, got %q", got)
+	}
+}
+
+func TestSandboxConfig_RewritePaths_SinglePath(t *testing.T) {
+	s := &SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
+	got := s.RewritePaths("cat /home/ws/src/main.go")
+	if got != "cat /tmp/real/src/main.go" {
+		t.Errorf("expected 'cat /tmp/real/src/main.go', got %q", got)
+	}
+}
+
+func TestSandboxConfig_RewritePaths_MultiplePaths(t *testing.T) {
+	s := &SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
+	got := s.RewritePaths("cp /home/ws/a.txt /home/ws/b.txt")
+	if got != "cp /tmp/real/a.txt /tmp/real/b.txt" {
+		t.Errorf("expected 'cp /tmp/real/a.txt /tmp/real/b.txt', got %q", got)
+	}
+}
+
+func TestSandboxConfig_RewritePaths_CommandString(t *testing.T) {
+	s := &SandboxConfig{VirtualRoot: "/home/myworkspace", Root: "/var/data/ws"}
+	got := s.RewritePaths("grep -r 'TODO' /home/myworkspace/src && echo done > /home/myworkspace/out.log")
+	expected := "grep -r 'TODO' /var/data/ws/src && echo done > /var/data/ws/out.log"
+	if got != expected {
+		t.Errorf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestSandboxConfig_RewritePaths_NoMatch(t *testing.T) {
+	s := &SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
+	got := s.RewritePaths("ls -la /etc/passwd")
+	if got != "ls -la /etc/passwd" {
+		t.Errorf("expected unchanged, got %q", got)
+	}
+}

@@ -40,12 +40,14 @@ type ToolRegistry interface {
 	ExecuteParallel(ctx context.Context, calls []ToolCall) []*ToolResult
 	Clone() ToolRegistry
 	IsStreamingTool(name string) bool
+	Without(names ...string) ToolRegistry
 }
 
 // SubAgent is a minimal interface for agent delegation, allowing tools to
 // invoke sub-agents without importing the agent package directly.
 type SubAgent interface {
 	SetModel(spec string) error
+	SetSystemPrompt(prompt string) error
 	Prompt(ctx context.Context, message string) (*ProviderResponse, error)
 	// Stream runs the agent in streaming mode and returns an event channel.
 	// The channel is closed when the agent loop finishes.

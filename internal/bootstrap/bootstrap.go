@@ -80,7 +80,7 @@ func InitAgent(cfg *cobot.Config, requireProvider bool) (*Result, error) {
 
 	if agentCfg != nil && agentCfg.SystemPrompt != "" {
 		prompt := resolveSystemPrompt(agentCfg.SystemPrompt, ws)
-		a.SetSystemPrompt(prompt)
+		_ = a.SetSystemPrompt(prompt)
 	}
 
 	// Create LLM registry for multi-provider model switching.
@@ -112,7 +112,7 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 
 	if agentCfg != nil && agentCfg.SystemPrompt != "" {
 		prompt := resolveSystemPrompt(agentCfg.SystemPrompt, ws)
-		a.SetSystemPrompt(prompt)
+		_ = a.SetSystemPrompt(prompt)
 	}
 
 	// --- memory ---
@@ -160,12 +160,19 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	}
 	a.RegisterTool(tools.NewReadFileTool(tools.WithReadSandbox(sandbox)))
 	a.RegisterTool(tools.NewWriteFileTool(tools.WithWriteSandbox(sandbox)))
+
+	// Shell tool gets the full sandbox config so it can rewrite virtual paths.
+	shellSandbox := &cobot.SandboxConfig{
+		VirtualRoot:     virtualRoot,
+		Root:            sandboxCfg.Root,
+		AllowPaths:      sandboxCfg.AllowPaths,
+		ReadonlyPaths:   sandboxCfg.ReadonlyPaths,
+		AllowNetwork:    sandboxCfg.AllowNetwork,
+		BlockedCommands: sandboxCfg.BlockedCommands,
+	}
 	a.RegisterTool(tools.NewShellExecTool(
 		tools.WithShellWorkdir(sandboxRoot),
-		tools.WithShellSandboxConfig(&cobot.SandboxConfig{
-			BlockedCommands: sandboxCfg.BlockedCommands,
-			AllowNetwork:    sandboxCfg.AllowNetwork,
-		}),
+		tools.WithShellSandboxConfig(shellSandbox),
 	))
 
 	// --- workspace tools ---
@@ -174,13 +181,14 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	// --- delegate tool ---
 	a.RegisterTool(tools.NewDelegateTool(func() cobot.SubAgent {
 		cfg := *a.Config() // value copy to avoid mutating parent's config
-		sub := agent.New(&cfg, a.ToolRegistry().Clone())
+		filtered := a.ToolRegistry().Clone().Without("delegate_task", "memory_store", "memory_search", "l3_deep_search")
+		sub := agent.New(&cfg, filtered)
 		sub.SetRegistry(registry)
 		if err := sub.SetModel(a.Model()); err != nil {
 			sub.SetProvider(a.Provider())
 		}
 		return sub
-	}))
+	}, tools.WithDelegateWorkdir(ws.DataDir), tools.WithDelegateAgentLookup(ws)))
 
 	return nil
 }

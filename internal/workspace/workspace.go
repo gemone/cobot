@@ -38,16 +38,17 @@ func (d *WorkspaceDefinition) ResolvePath(dataDir string) string {
 }
 
 type WorkspaceConfig struct {
-	ID            string              `yaml:"id"`
-	Name          string              `yaml:"name"`
-	Type          WorkspaceType       `yaml:"type"`
-	Root          string              `yaml:"root,omitempty"`
-	CreatedAt     time.Time           `yaml:"created_at"`
-	UpdatedAt     time.Time           `yaml:"updated_at"`
-	EnabledMCP    []string            `yaml:"enabled_mcp,omitempty"`
-	EnabledSkills []string            `yaml:"enabled_skills,omitempty"`
-	Sandbox       cobot.SandboxConfig `yaml:"sandbox,omitempty"`
-	DefaultAgent  string              `yaml:"default_agent,omitempty"`
+	ID             string                     `yaml:"id"`
+	Name           string                     `yaml:"name"`
+	Type           WorkspaceType              `yaml:"type"`
+	Root           string                     `yaml:"root,omitempty"`
+	CreatedAt      time.Time                  `yaml:"created_at"`
+	UpdatedAt      time.Time                  `yaml:"updated_at"`
+	EnabledMCP     []string                   `yaml:"enabled_mcp,omitempty"`
+	EnabledSkills  []string                   `yaml:"enabled_skills,omitempty"`
+	Sandbox        cobot.SandboxConfig        `yaml:"sandbox,omitempty"`
+	DefaultAgent   string                     `yaml:"default_agent,omitempty"`
+	ExternalAgents []cobot.ExternalAgentConfig `yaml:"external_agents,omitempty"`
 }
 
 type Workspace struct {
@@ -93,6 +94,16 @@ func (w *Workspace) AgentsDir() string {
 func (w *Workspace) ConfigPath() string {
 	return filepath.Join(w.DataDir, "workspace.yaml")
 }
+
+func (w *Workspace) ExternalAgent(name string) (*cobot.ExternalAgentConfig, bool) {
+	for i := range w.Config.ExternalAgents {
+		if w.Config.ExternalAgents[i].Name == name {
+			return &w.Config.ExternalAgents[i], true
+		}
+	}
+	return nil, false
+}
+
 func (w *Workspace) EnsureDirs() error {
 	dirs := []string{
 		w.DataDir,

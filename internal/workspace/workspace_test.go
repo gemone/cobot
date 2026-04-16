@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
 func TestWorkspaceDefinition_ResolvePath_Default(t *testing.T) {
@@ -216,5 +218,35 @@ func TestWorkspace_Accessors(t *testing.T) {
 	}
 	if ws.ConfigPath() != filepath.Join(dataDir, "workspace.yaml") {
 		t.Errorf("ConfigPath() = %s", ws.ConfigPath())
+	}
+}
+
+func TestWorkspace_ExternalAgent(t *testing.T) {
+	ws := &Workspace{
+		Config: &WorkspaceConfig{
+			ExternalAgents: []cobot.ExternalAgentConfig{
+				{Name: "alpha", Command: "cmd1"},
+				{Name: "beta", Command: "cmd2"},
+			},
+		},
+	}
+
+	cfg, ok := ws.ExternalAgent("alpha")
+	if !ok {
+		t.Fatal("expected to find alpha")
+	}
+	if cfg.Command != "cmd1" {
+		t.Errorf("Command = %q, want cmd1", cfg.Command)
+	}
+
+	_, ok = ws.ExternalAgent("gamma")
+	if ok {
+		t.Error("expected not to find gamma")
+	}
+
+	// modifying returned pointer should affect original
+	cfg.Command = "cmd1-modified"
+	if ws.Config.ExternalAgents[0].Command != "cmd1-modified" {
+		t.Error("modifying returned config did not affect original")
 	}
 }

@@ -8,6 +8,10 @@
     "model": {
       "type": "string",
       "description": "Optional model override in provider:model format. Omit to inherit the current model."
+    },
+    "agent_type": {
+      "type": "string",
+      "description": "Agent to delegate to. Use 'internal' for the built-in agent loop, or the name of a configured external agent (e.g. 'opencode')."
     }
   },
   "required": ["prompt"]

@@ -20,60 +20,124 @@ type SubAgentFactory func() cobot.SubAgent
 
 var _ cobot.StreamingTool = (*DelegateTool)(nil)
 
-type DelegateTool struct {
-	factory SubAgentFactory
+type ExternalAgentLookup interface {
+	ExternalAgent(name string) (*cobot.ExternalAgentConfig, bool)
 }
 
-func NewDelegateTool(factory SubAgentFactory) *DelegateTool {
-	return &DelegateTool{factory: factory}
+type DelegateTool struct {
+	factory     SubAgentFactory
+	workdir     string
+	agentLookup ExternalAgentLookup // to lookup external agent configs
+}
+
+func WithDelegateWorkdir(workdir string) func(*DelegateTool) {
+	return func(t *DelegateTool) { t.workdir = workdir }
+}
+
+func WithDelegateAgentLookup(l ExternalAgentLookup) func(*DelegateTool) {
+	return func(t *DelegateTool) { t.agentLookup = l }
+}
+
+func NewDelegateTool(factory SubAgentFactory, opts ...func(*DelegateTool)) *DelegateTool {
+	t := &DelegateTool{factory: factory}
+	for _, opt := range opts {
+		opt(t)
+	}
+	return t
 }
 
 func (t *DelegateTool) Name() string { return "delegate_task" }
 
 func (t *DelegateTool) Description() string {
-	return `Delegate a subtask to a sub-agent. The sub-agent runs autonomously and returns its result. Use for: complex subtasks, parallel work, isolated research. Parameters: prompt (required) - what the sub-agent should do; model (optional) - override model only if a different model is explicitly needed, otherwise omit to inherit the current model.`
+	return `Delegate a subtask to a sub-agent. The sub-agent runs autonomously and returns its result. Use for: complex subtasks, parallel work, isolated research. Parameters: prompt (required) - what the sub-agent should do; model (optional) - override model only if a different model is explicitly needed, otherwise omit to inherit the current model; agent_type (optional) - internal (default) or the name of a configured external agent.`
 }
 
 func (t *DelegateTool) Parameters() json.RawMessage {
 	return json.RawMessage(delegateTaskParamsJSON)
 }
 
-func (t *DelegateTool) parseParams(args json.RawMessage) (prompt, model string, err error) {
-	var params struct {
-		Prompt string `json:"prompt"`
-		Model  string `json:"model"`
-	}
-	if err := decodeArgs(args, &params); err != nil {
-		return "", "", err
-	}
-	if params.Prompt == "" {
-		return "", "", fmt.Errorf("prompt is required")
-	}
-	return params.Prompt, params.Model, nil
+type delegateParams struct {
+	Prompt    string `json:"prompt"`
+	Model     string `json:"model"`
+	AgentType string `json:"agent_type"`
 }
 
-func (t *DelegateTool) setupSubAgent(model string) (cobot.SubAgent, error) {
+func (t *DelegateTool) parseParams(args json.RawMessage) (delegateParams, error) {
+	var params delegateParams
+	if err := decodeArgs(args, &params); err != nil {
+		return delegateParams{}, err
+	}
+	if params.Prompt == "" {
+		return delegateParams{}, fmt.Errorf("prompt is required")
+	}
+	return params, nil
+}
+
+func (t *DelegateTool) setupSubAgent(params delegateParams) (cobot.SubAgent, error) {
+	if params.AgentType != "" && params.AgentType != "internal" {
+		if t.agentLookup == nil {
+			return nil, fmt.Errorf("external agent %q not found: no workspace configured", params.AgentType)
+		}
+		cfg, ok := t.agentLookup.ExternalAgent(params.AgentType)
+		if !ok {
+			return nil, fmt.Errorf("external agent %q not found in workspace config", params.AgentType)
+		}
+		if cfg.Command == "" {
+			return nil, fmt.Errorf("external agent %q has no command configured", params.AgentType)
+		}
+		cmd := cfg.Command
+		args := cfg.Args
+		if len(args) == 0 {
+			args = []string{"--acp", "--stdio"}
+		}
+		timeout := delegateTimeout
+		if cfg.Timeout != "" {
+			d, err := time.ParseDuration(cfg.Timeout)
+			if err != nil {
+				return nil, fmt.Errorf("invalid timeout %q: %w", cfg.Timeout, err)
+			}
+			timeout = d
+		}
+		wd := cfg.Workdir
+		if wd == "" {
+			wd = t.workdir
+		}
+		acp := NewACPSubAgent(cmd, args, wd, timeout)
+		if params.Model != "" {
+			if err := acp.SetModel(params.Model); err != nil {
+				return nil, fmt.Errorf("set model: %w", err)
+			}
+		}
+		if err := acp.SetSystemPrompt(cobot.DefaultSubAgentSystemPrompt); err != nil {
+			return nil, fmt.Errorf("set system prompt: %w", err)
+		}
+		return acp, nil
+	}
+
 	sub := t.factory()
-	if model != "" {
-		if err := sub.SetModel(model); err != nil {
+	if params.Model != "" {
+		if err := sub.SetModel(params.Model); err != nil {
 			return nil, fmt.Errorf("set model: %w", err)
 		}
+	}
+	if err := sub.SetSystemPrompt(cobot.DefaultSubAgentSystemPrompt); err != nil {
+		return nil, fmt.Errorf("set system prompt: %w", err)
 	}
 	return sub, nil
 }
 
 func (t *DelegateTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	prompt, model, err := t.parseParams(args)
+	params, err := t.parseParams(args)
 	if err != nil {
 		return "", err
 	}
-	sub, err := t.setupSubAgent(model)
+	sub, err := t.setupSubAgent(params)
 	if err != nil {
 		return "", err
 	}
 	ctx, cancel := context.WithTimeout(ctx, delegateTimeout)
 	defer cancel()
-	resp, err := sub.Prompt(ctx, prompt)
+	resp, err := sub.Prompt(ctx, params.Prompt)
 	if err != nil {
 		return "", fmt.Errorf("sub-agent error: %w", err)
 	}
@@ -81,11 +145,11 @@ func (t *DelegateTool) Execute(ctx context.Context, args json.RawMessage) (strin
 }
 
 func (t *DelegateTool) ExecuteStream(ctx context.Context, args json.RawMessage, eventCh chan<- cobot.Event) (string, error) {
-	prompt, model, err := t.parseParams(args)
+	params, err := t.parseParams(args)
 	if err != nil {
 		return "", err
 	}
-	sub, err := t.setupSubAgent(model)
+	sub, err := t.setupSubAgent(params)
 	if err != nil {
 		return "", err
 	}
@@ -93,7 +157,7 @@ func (t *DelegateTool) ExecuteStream(ctx context.Context, args json.RawMessage, 
 	ctx, cancel := context.WithTimeout(ctx, delegateTimeout)
 	defer cancel()
 
-	streamCh, err := sub.Stream(ctx, prompt)
+	streamCh, err := sub.Stream(ctx, params.Prompt)
 	if err != nil {
 		return "", fmt.Errorf("sub-agent stream error: %w", err)
 	}

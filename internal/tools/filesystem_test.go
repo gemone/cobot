@@ -159,3 +159,127 @@ func TestWriteFileTool_SandboxRejectOutside(t *testing.T) {
 		t.Error("expected error for path outside virtual root")
 	}
 }
+
+func TestShellExecTool_SandboxRewriteCommand(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("world"), 0644)
+
+	sandbox := &cobot.SandboxConfig{
+		VirtualRoot:     "/home/test",
+		Root:            dir,
+		AllowNetwork:    true,
+		BlockedCommands: nil,
+	}
+	tool := NewShellExecTool(
+		WithShellWorkdir(dir),
+		WithShellSandboxConfig(sandbox),
+	)
+
+	// The LLM sends a command using the virtual path; the tool should rewrite it.
+	args, _ := json.Marshal(map[string]string{"command": "cat /home/test/hello.txt"})
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	result = strings.TrimSpace(strings.ReplaceAll(result, "\r\n", "\n"))
+	if result != "world" {
+		t.Errorf("expected 'world', got %q", result)
+	}
+}
+
+func TestShellExecTool_SandboxRewriteDir(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "subdir")
+	os.MkdirAll(sub, 0755)
+
+	sandbox := &cobot.SandboxConfig{
+		VirtualRoot:     "/home/test",
+		Root:            dir,
+		AllowNetwork:    true,
+		BlockedCommands: nil,
+	}
+	tool := NewShellExecTool(
+		WithShellWorkdir(dir),
+		WithShellSandboxConfig(sandbox),
+	)
+
+	// The LLM sends dir as a virtual path; the tool should resolve it.
+	args, _ := json.Marshal(map[string]string{"command": "pwd", "dir": "/home/test/subdir"})
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	result = strings.TrimSpace(strings.ReplaceAll(result, "\r\n", "\n"))
+
+	// Resolve symlinks for comparison (macOS /var → /private/var)
+	expected, err := filepath.Abs(sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected, err = filepath.EvalSymlinks(expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, err := filepath.Abs(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, err = filepath.EvalSymlinks(actual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual != expected {
+		t.Errorf("expected %q, got %q", expected, actual)
+	}
+}
+
+func TestShellExecTool_SandboxRejectDirOutside(t *testing.T) {
+	dir := t.TempDir()
+
+	sandbox := &cobot.SandboxConfig{
+		VirtualRoot:     "/home/test",
+		Root:            dir,
+		AllowNetwork:    true,
+		BlockedCommands: nil,
+	}
+	tool := NewShellExecTool(
+		WithShellWorkdir(dir),
+		WithShellSandboxConfig(sandbox),
+	)
+
+	args, _ := json.Marshal(map[string]string{"command": "pwd", "dir": "/etc"})
+	_, err := tool.Execute(context.Background(), args)
+	if err == nil {
+		t.Error("expected error for dir outside virtual root")
+	}
+}
+
+func TestShellExecTool_NoSandboxUnchanged(t *testing.T) {
+	tool := NewShellExecTool()
+	args, _ := json.Marshal(map[string]string{"command": "echo hello"})
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result = strings.ReplaceAll(result, "\r\n", "\n")
+	if result != "hello\n" {
+		t.Errorf("expected 'hello\\n', got %q", result)
+	}
+}
+
+func TestShellExecTool_Description_Sandbox(t *testing.T) {
+	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
+	tool := NewShellExecTool(WithShellSandboxConfig(sandbox))
+	desc := tool.Description()
+	if !strings.Contains(desc, "/home/ws") {
+		t.Errorf("description should mention VirtualRoot, got %q", desc)
+	}
+}
+
+func TestShellExecTool_Description_NoSandbox(t *testing.T) {
+	tool := NewShellExecTool(WithShellWorkdir("/some/dir"))
+	desc := tool.Description()
+	if !strings.Contains(desc, "/some/dir") {
+		t.Errorf("description should mention workdir, got %q", desc)
+	}
+}

@@ -6,17 +6,26 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/cobot-agent/cobot/internal/workspace"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
 type mockSubAgent struct {
-	response *cobot.ProviderResponse
-	err      error
-	modelErr error
+	response     *cobot.ProviderResponse
+	err          error
+	modelErr     error
+	systemPrompt string
+	model        string
 }
 
 func (m *mockSubAgent) SetModel(spec string) error {
+	m.model = spec
 	return m.modelErr
+}
+
+func (m *mockSubAgent) SetSystemPrompt(prompt string) error {
+	m.systemPrompt = prompt
+	return nil
 }
 
 func (m *mockSubAgent) Prompt(_ context.Context, _ string) (*cobot.ProviderResponse, error) {
@@ -114,5 +123,109 @@ func TestDelegateTool_ExecuteModelResolutionError(t *testing.T) {
 	_, err := dt.Execute(context.Background(), args)
 	if err == nil {
 		t.Error("expected error for bad model resolution")
+	}
+}
+
+func TestDelegateTool_ExecuteExternalAgentViaWorkspace(t *testing.T) {
+	ws := &workspace.Workspace{
+		Config: &workspace.WorkspaceConfig{
+			ExternalAgents: []cobot.ExternalAgentConfig{
+				{
+					Name:    "myagent",
+					Command: "echo",
+					Args:    []string{"hello"},
+					Workdir: "/tmp/ws",
+					Timeout: "1s",
+				},
+			},
+		},
+	}
+
+	dt := NewDelegateTool(nil, WithDelegateWorkdir("/tmp/test"), WithDelegateAgentLookup(ws))
+
+	args, _ := json.Marshal(map[string]any{
+		"prompt":     "do something",
+		"agent_type": "myagent",
+	})
+	params, err := dt.parseParams(args)
+	if err != nil {
+		t.Fatalf("parseParams() error: %v", err)
+	}
+	if params.AgentType != "myagent" {
+		t.Errorf("AgentType = %q, want myagent", params.AgentType)
+	}
+
+	sub, err := dt.setupSubAgent(params)
+	if err != nil {
+		t.Fatalf("setupSubAgent() error: %v", err)
+	}
+	acp, ok := sub.(*ACPSubAgent)
+	if !ok {
+		t.Fatalf("setupSubAgent() returned %T, want *ACPSubAgent", sub)
+	}
+	if acp.command != "echo" {
+		t.Errorf("ACP command = %q, want echo", acp.command)
+	}
+	if acp.workdir != "/tmp/ws" {
+		t.Errorf("ACP workdir = %q, want /tmp/ws", acp.workdir)
+	}
+}
+
+func TestDelegateTool_ExecuteExternalAgentNotFound(t *testing.T) {
+	ws := &workspace.Workspace{
+		Config: &workspace.WorkspaceConfig{
+			ExternalAgents: []cobot.ExternalAgentConfig{},
+		},
+	}
+
+	dt := NewDelegateTool(nil, WithDelegateWorkdir("/tmp/test"), WithDelegateAgentLookup(ws))
+
+	args, _ := json.Marshal(map[string]any{
+		"prompt":     "do something",
+		"agent_type": "unknown",
+	})
+	params, err := dt.parseParams(args)
+	if err != nil {
+		t.Fatalf("parseParams() error: %v", err)
+	}
+
+	_, err = dt.setupSubAgent(params)
+	if err == nil {
+		t.Fatal("expected error for unknown external agent")
+	}
+}
+
+func TestDelegateTool_ExecuteExternalAgentNoWorkspace(t *testing.T) {
+	dt := NewDelegateTool(nil, WithDelegateWorkdir("/tmp/test"))
+
+	args, _ := json.Marshal(map[string]any{
+		"prompt":     "do something",
+		"agent_type": "myagent",
+	})
+	params, err := dt.parseParams(args)
+	if err != nil {
+		t.Fatalf("parseParams() error: %v", err)
+	}
+
+	_, err = dt.setupSubAgent(params)
+	if err == nil {
+		t.Fatal("expected error when no workspace is configured")
+	}
+}
+
+func TestDelegateTool_InternalSetsSystemPrompt(t *testing.T) {
+	var sub *mockSubAgent
+	dt := NewDelegateTool(func() cobot.SubAgent {
+		sub = &mockSubAgent{response: &cobot.ProviderResponse{Content: "ok", StopReason: cobot.StopEndTurn}}
+		return sub
+	})
+
+	args, _ := json.Marshal(map[string]string{"prompt": "do something"})
+	_, err := dt.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	if sub.systemPrompt != cobot.DefaultSubAgentSystemPrompt {
+		t.Errorf("system prompt = %q, want %q", sub.systemPrompt, cobot.DefaultSubAgentSystemPrompt)
 	}
 }

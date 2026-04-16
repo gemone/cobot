@@ -111,6 +111,16 @@ func (s *SandboxConfig) ResolvePath(path string) (string, error) {
 	return filepath.Join(s.Root, rel[1:]), nil
 }
 
+// RewritePaths scans text for occurrences of VirtualRoot as a path prefix and replaces
+// them with Root. This is used to rewrite command strings and other text that may contain
+// virtual paths. If VirtualRoot is empty, returns text unchanged.
+func (s *SandboxConfig) RewritePaths(text string) string {
+	if s == nil || s.VirtualRoot == "" {
+		return text
+	}
+	return strings.ReplaceAll(text, s.VirtualRoot, s.Root)
+}
+
 func (s *SandboxConfig) IsBlockedCommand(cmd string) bool {
 	fields := strings.Fields(cmd)
 	if len(fields) == 0 {
@@ -174,4 +184,13 @@ func DefaultSessionConfig() SessionConfig {
 		CompressThreshold:  0.7,
 		SummarizeTurns:     60,
 	}
+}
+
+type ExternalAgentConfig struct {
+	Name        string   `yaml:"name"`
+	Description string   `yaml:"description,omitempty"`
+	Command     string   `yaml:"command"`
+	Args        []string `yaml:"args,omitempty"`
+	Workdir     string   `yaml:"workdir,omitempty"`
+	Timeout     string   `yaml:"timeout,omitempty"`
 }

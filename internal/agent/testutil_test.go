@@ -100,3 +100,19 @@ func (r *testRegistry) IsStreamingTool(name string) bool {
 	_, streaming := t.(cobot.StreamingTool)
 	return streaming
 }
+
+func (r *testRegistry) Without(names ...string) cobot.ToolRegistry {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	exclude := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		exclude[n] = struct{}{}
+	}
+	cloned := newTestRegistry()
+	for name, t := range r.tools {
+		if _, ok := exclude[name]; !ok {
+			cloned.tools[name] = t
+		}
+	}
+	return cloned
+}

@@ -84,7 +84,9 @@ func (t *ShellExecTool) Name() string {
 
 func (t *ShellExecTool) Description() string {
 	desc := "Execute a shell command and return its output."
-	if t.workdir != "" {
+	if t.config != nil && t.config.VirtualRoot != "" {
+		desc += fmt.Sprintf(" Working directory: %s — all file paths must start with %q.", t.config.VirtualRoot, t.config.VirtualRoot)
+	} else if t.workdir != "" {
 		desc += fmt.Sprintf(" Working directory: %s — all relative paths resolve from here.", t.workdir)
 	}
 	return desc
@@ -99,6 +101,19 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if err := decodeArgs(args, &a); err != nil {
 		return "", err
 	}
+
+	// Sandbox: rewrite virtual paths in command and dir to real filesystem paths.
+	if t.config != nil && t.config.VirtualRoot != "" {
+		a.Command = t.config.RewritePaths(a.Command)
+		if a.Dir != "" {
+			resolved, err := t.config.ResolvePath(a.Dir)
+			if err != nil {
+				return "", err
+			}
+			a.Dir = resolved
+		}
+	}
+
 	cmdStr := a.Command
 
 	// Check blocked commands via SandboxConfig.IsBlockedCommand if available.
