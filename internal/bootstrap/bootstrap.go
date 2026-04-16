@@ -150,9 +150,6 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	} else {
 		a.SetMemoryStore(store)
 		a.SetMemoryRecall(store)
-		a.RegisterTool(memory.NewMemorySearchTool(store))
-		a.RegisterTool(memory.NewMemoryStoreTool(store))
-		a.RegisterTool(memory.NewL3DeepSearchTool(store))
 	}
 
 	// --- sandbox ---

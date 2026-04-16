@@ -439,3 +439,55 @@ func TestAllFilesystemTools_WithoutSandbox(t *testing.T) {
 		}
 	}
 }
+
+// --- WriteFileTool auto-create parent dirs test ---
+
+func TestWriteFileTool_SandboxCreatesParentDirs(t *testing.T) {
+	dir := t.TempDir()
+	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/ws", Root: dir}
+	tool := NewWriteFileTool(WithWriteSandbox(sandbox))
+
+	// Write to a nested path where parent dirs don't exist
+	args, _ := json.Marshal(map[string]string{"path": "/home/ws/deep/nested/file.txt", "content": "hello"})
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != "wrote /home/ws/deep/nested/file.txt" {
+		t.Errorf("expected 'wrote /home/ws/deep/nested/file.txt', got %q", result)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "deep", "nested", "file.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "hello" {
+		t.Errorf("expected 'hello', got %q", string(data))
+	}
+}
+
+// --- ShellExecTool sandbox auto-resolve dir test ---
+
+func TestShellExecTool_SandboxAutoResolvesDir(t *testing.T) {
+	dir := t.TempDir()
+	// Create the "src" directory so the shell can chdir into it.
+	os.MkdirAll(filepath.Join(dir, "src"), 0755)
+	sandbox := &cobot.SandboxConfig{
+		VirtualRoot: "/home/ws",
+		Root:        dir,
+	}
+	tool := NewShellExecTool(
+		WithShellWorkdir(dir),
+		WithShellSandboxConfig(sandbox),
+	)
+
+	// LLM passes a relative dir — should auto-resolve
+	args, _ := json.Marshal(map[string]string{"command": "pwd", "dir": "src"})
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// The output should contain the virtual path (RewriteOutputPaths rewrites real → virtual)
+	if !strings.Contains(result, "/home/ws") && result != "" {
+		t.Errorf("expected output with virtual path, got %q", result)
+	}
+}

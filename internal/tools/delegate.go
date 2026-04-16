@@ -175,6 +175,10 @@ func (t *DelegateTool) ExecuteStream(ctx context.Context, args json.RawMessage, 
 	for evt := range streamCh {
 		switch evt.Type {
 		case cobot.EventText:
+			// Sanitize real paths in streaming events
+			if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
+				evt.Content = t.sandbox.RewriteOutputPaths(evt.Content)
+			}
 			result.WriteString(evt.Content)
 			select {
 			case eventCh <- evt:
@@ -182,6 +186,9 @@ func (t *DelegateTool) ExecuteStream(ctx context.Context, args json.RawMessage, 
 				return result.String(), ctx.Err()
 			}
 		case cobot.EventToolCall, cobot.EventToolResult, cobot.EventToolStart:
+			if t.sandbox != nil && t.sandbox.VirtualRoot != "" && evt.Content != "" {
+				evt.Content = t.sandbox.RewriteOutputPaths(evt.Content)
+			}
 			select {
 			case eventCh <- evt:
 			case <-ctx.Done():

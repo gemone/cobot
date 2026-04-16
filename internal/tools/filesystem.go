@@ -142,6 +142,15 @@ func (t *WriteFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if t.sandbox != nil && !t.sandbox.IsAllowed(a.Path, true) {
 		return "", fmt.Errorf("path %q is outside allowed workspace paths", originalPath)
 	}
+	// Ensure parent directory exists
+	if dir := filepath.Dir(a.Path); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			if t.sandbox != nil {
+				return "", fmt.Errorf("%s", t.sandbox.RewriteOutputPaths(err.Error()))
+			}
+			return "", err
+		}
+	}
 	if err := os.WriteFile(a.Path, []byte(a.Content), 0644); err != nil {
 		if t.sandbox != nil {
 			return "", fmt.Errorf("%s", t.sandbox.RewriteOutputPaths(err.Error()))

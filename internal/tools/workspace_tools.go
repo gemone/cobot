@@ -87,7 +87,7 @@ func (t *WorkspaceConfigUpdateTool) Execute(ctx context.Context, args json.RawMe
 	}
 
 	if err := t.workspace.SaveConfig(); err != nil {
-		return "", fmt.Errorf("save config: %w", err)
+		return "", sandboxRewriteErr(t.sandbox, fmt.Errorf("save config: %w", err))
 	}
 	return "workspace config updated", nil
 }

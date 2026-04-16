@@ -106,7 +106,7 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if t.config != nil && t.config.VirtualRoot != "" {
 		a.Command = t.config.RewritePaths(a.Command)
 		if a.Dir != "" {
-			resolved, err := t.config.ResolvePath(a.Dir)
+			resolved, err := t.config.AutoResolvePath(a.Dir)
 			if err != nil {
 				return "", err
 			}
@@ -147,9 +147,13 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	}
 	cmd := exec.CommandContext(ctx, shell, shellFlag, a.Command)
 	if a.Dir != "" {
+		originalDir := a.Dir
 		if t.workdir != "" {
 			absWorkdir, err := filepath.Abs(t.workdir)
 			if err != nil {
+				if t.config != nil && t.config.VirtualRoot != "" {
+					return "", fmt.Errorf("resolve workdir: %s", t.config.RewriteOutputPaths(err.Error()))
+				}
 				return "", fmt.Errorf("resolve workdir: %w", err)
 			}
 			absDir := absWorkdir
@@ -158,13 +162,16 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 			} else {
 				absDir = filepath.Join(absWorkdir, a.Dir)
 				if absDir, err = filepath.Abs(absDir); err != nil {
+					if t.config != nil && t.config.VirtualRoot != "" {
+						return "", fmt.Errorf("resolve dir: %s", t.config.RewriteOutputPaths(err.Error()))
+					}
 					return "", fmt.Errorf("resolve dir: %w", err)
 				}
 			}
 			absDir = cobot.EvalSymlinks(absDir)
 			absWorkdir = cobot.EvalSymlinks(absWorkdir)
 			if !cobot.IsSubpath(absDir, absWorkdir) {
-				return "", fmt.Errorf("dir %q is outside workspace boundaries", a.Dir)
+				return "", fmt.Errorf("dir %q is outside workspace boundaries", originalDir)
 			}
 			cmd.Dir = absDir
 		} else {
@@ -185,6 +192,9 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		return output, fmt.Errorf("shell command timed out after %s", t.timeout)
 	}
 	if err != nil {
+		if t.config != nil && t.config.VirtualRoot != "" {
+			return output, fmt.Errorf("%s", t.config.RewriteOutputPaths(err.Error()))
+		}
 		return output, err
 	}
 	return output, nil

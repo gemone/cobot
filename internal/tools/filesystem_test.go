@@ -161,10 +161,23 @@ func TestWriteFileTool_SandboxRejectOutside(t *testing.T) {
 
 	tool := NewWriteFileTool(WithWriteSandbox(sandbox))
 
+	// /tmp/evil.txt is auto-resolved to dir/tmp/evil.txt inside the sandbox,
+	// so it succeeds (the path is safely contained within the sandbox).
 	args, _ := json.Marshal(map[string]string{"path": "/tmp/evil.txt", "content": "bad"})
-	_, err := tool.Execute(context.Background(), args)
-	if err == nil {
-		t.Error("expected error for path outside virtual root")
+	result, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// The written file should appear under the auto-resolved virtual path.
+	if result != "wrote /home/test/tmp/evil.txt" {
+		t.Errorf("expected 'wrote /home/test/tmp/evil.txt', got %q", result)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "tmp", "evil.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "bad" {
+		t.Errorf("expected 'bad', got %q", string(data))
 	}
 }
 
