@@ -182,6 +182,8 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	}
 	a.RegisterTool(tools.NewReadFileTool(tools.WithReadSandbox(sandbox)))
 	a.RegisterTool(tools.NewWriteFileTool(tools.WithWriteSandbox(sandbox)))
+	a.RegisterTool(tools.NewListDirTool(tools.WithListSandbox(sandbox)))
+	a.RegisterTool(tools.NewSearchFilesTool(tools.WithSearchSandbox(sandbox)))
 
 	// Shell tool gets the full sandbox config so it can rewrite virtual paths.
 	shellSandbox := &cobot.SandboxConfig{

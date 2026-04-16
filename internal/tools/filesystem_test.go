@@ -95,8 +95,9 @@ func TestReadFileTool_SandboxResolve(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result != "package main" {
-		t.Errorf("expected 'package main', got %s", result)
+	expected := "# /home/test/src/main.go\npackage main"
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
 	}
 }
 
@@ -127,8 +128,9 @@ func TestReadFileTool_SandboxRejectRelative(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result != "package main" {
-		t.Errorf("expected 'package main', got %s", result)
+	expected := "# /home/test/src/main.go\npackage main"
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
 	}
 }
 
@@ -143,8 +145,8 @@ func TestWriteFileTool_SandboxResolve(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result != "ok" {
-		t.Errorf("expected ok, got %s", result)
+	if result != "wrote /home/test/output.txt" {
+		t.Errorf("expected 'wrote /home/test/output.txt', got %s", result)
 	}
 
 	data, _ := os.ReadFile(filepath.Join(dir, "output.txt"))

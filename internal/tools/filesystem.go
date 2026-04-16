@@ -80,6 +80,10 @@ func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		}
 		return "", err
 	}
+	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
+		virtualPath := t.sandbox.RealToVirtual(a.Path)
+		return fmt.Sprintf("# %s\n%s", virtualPath, string(data)), nil
+	}
 	return string(data), nil
 }
 
@@ -143,6 +147,10 @@ func (t *WriteFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 			return "", fmt.Errorf("%s", t.sandbox.RewriteOutputPaths(err.Error()))
 		}
 		return "", err
+	}
+	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
+		virtualPath := t.sandbox.RealToVirtual(a.Path)
+		return fmt.Sprintf("wrote %s", virtualPath), nil
 	}
 	return "ok", nil
 }
