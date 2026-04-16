@@ -4,37 +4,89 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
 	"time"
 
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
 // Store provides hierarchical memory storage backed by SQLite with FTS5.
+// The LTM (long-term memory) uses a shared memory.db, while each session's
+// STM (short-term memory) gets its own per-session SQLite database.
 type Store struct {
-	db *sql.DB
+	db     *sql.DB              // LTM database
+	stmDir string               // directory for per-session STM DBs
+	stmMu  sync.Mutex           // protects stmDBs map
+	stmDBs map[string]*sql.DB   // sessionID → STM DB connection
 }
 
 // OpenStore opens a SQLite-backed memory store at the given directory.
 // It creates the directory and database file if they don't exist,
 // enables WAL mode for concurrent reads, and ensures the schema is current.
-func OpenStore(memoryDir string) (*Store, error) {
+// stmDir specifies the directory for per-session STM databases; it may be
+// empty to disable STM support.
+func OpenStore(memoryDir string, stmDir string) (*Store, error) {
 	db, err := openDB(memoryDir)
 	if err != nil {
 		return nil, err
 	}
-	if err := ensureSchema(db); err != nil {
-		db.Close()
-		return nil, err
-	}
-	return &Store{db: db}, nil
+	return &Store{
+		db:     db,
+		stmDir: stmDir,
+		stmDBs: make(map[string]*sql.DB),
+	}, nil
 }
 
-// Close closes the underlying database connection.
+// Close closes the LTM database and all open STM databases.
 func (s *Store) Close() error {
-	if s.db != nil {
-		return s.db.Close()
+	var firstErr error
+	// Close all STM DBs.
+	s.stmMu.Lock()
+	for sid, db := range s.stmDBs {
+		if err := db.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		delete(s.stmDBs, sid)
 	}
-	return nil
+	s.stmMu.Unlock()
+
+	if s.db != nil {
+		if err := s.db.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// --- STM DB lifecycle helpers ---
+
+// getSTMDB returns (or creates) the per-session STM database.
+func (s *Store) getSTMDB(sessionID string) (*sql.DB, error) {
+	s.stmMu.Lock()
+	defer s.stmMu.Unlock()
+	if db, ok := s.stmDBs[sessionID]; ok {
+		return db, nil
+	}
+	db, err := openSTMDB(s.stmDir, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	s.stmDBs[sessionID] = db
+	return db, nil
+}
+
+// closeSTMDB closes and removes a per-session STM DB from the pool.
+func (s *Store) closeSTMDB(sessionID string) error {
+	s.stmMu.Lock()
+	defer s.stmMu.Unlock()
+	db, ok := s.stmDBs[sessionID]
+	if !ok {
+		return nil
+	}
+	delete(s.stmDBs, sessionID)
+	return db.Close()
 }
 
 // Store adds content to a room's drawers and indexes it for full-text search.
@@ -88,37 +140,35 @@ func (s *Store) Search(ctx context.Context, query *cobot.SearchQuery) ([]*cobot.
 }
 
 var (
-	_ cobot.MemoryStore  = (*Store)(nil)
-	_ cobot.MemoryRecall = (*Store)(nil)
+	_ cobot.MemoryStore    = (*Store)(nil)
+	_ cobot.MemoryRecall   = (*Store)(nil)
 	_ cobot.ShortTermMemory = (*Store)(nil)
 )
 
 // --- Short-term Memory (STM) ---
 //
-// Each session gets its own Wing named "stm_{session_id}" with five rooms:
+// Each session gets its own SQLite database file ({stmDir}/{sessionID}.db)
+// with a single wing named "session" containing five rooms:
 //   - "context"     — user directives, task state, decisions
 //   - "todo"        — TODO items tracked during session
 //   - "notes"       — temporary notes, user requirements
 //   - "observation" — tool results, build/test outcomes, error states
 //   - "compressed"  — compressed session records from compressor
 //
-// The wing is deleted when the session ends (after promoting valuable items to LTM).
+// The database file is deleted when the session ends (after promoting
+// valuable items to LTM).
 
 const (
-	stmWingPrefix = "stm_"         // prefix + sessionID = wing name
-	stmMaxItems   = 20
+	stmMaxItems = 20
 
-	stmRoomContext    = "context"     // user directives, decisions, task state
-	stmRoomTodo       = "todo"        // TODO items tracked during session
-	stmRoomNotes      = "notes"       // temporary notes, user requirements
+	stmRoomContext     = "context"     // user directives, decisions, task state
+	stmRoomTodo        = "todo"        // TODO items tracked during session
+	stmRoomNotes       = "notes"       // temporary notes, user requirements
 	stmRoomObservation = "observation" // tool results, build/test outcomes, errors
 	stmRoomCompressed  = "compressed"  // compressed session records from compressor
-)
 
-// stmWingName returns the wing name for a session's short-term memory.
-func stmWingName(sessionID string) string {
-	return stmWingPrefix + sessionID
-}
+	stmWingName = "session" // wing name inside each per-session STM DB
+)
 
 // stmRoomForCategory maps an extractor category to an STM room name.
 func stmRoomForCategory(category string) string {
@@ -138,6 +188,51 @@ func stmRoomForCategory(category string) string {
 	}
 }
 
+// storeByNameOnDB stores content using a specific DB connection instead of s.db.
+// This is used for STM operations that target a per-session database.
+func (s *Store) storeByNameOnDB(ctx context.Context, db *sql.DB, content, wingName, roomName, hallType string) (string, error) {
+	if hallType == "" {
+		hallType = cobot.TagFacts
+	}
+	// Create wing if not exists on the target DB.
+	var wingID string
+	row := db.QueryRowContext(ctx, sqlSelectWingByName, wingName)
+	var w cobot.Wing
+	var kwJSON string
+	if err := row.Scan(&w.ID, &w.Name, &w.Type, &kwJSON); err == sql.ErrNoRows {
+		wingID = newID()
+		if _, err := db.ExecContext(ctx, sqlInsertWing, wingID, wingName, "", "[]"); err != nil {
+			return "", err
+		}
+	} else if err != nil {
+		return "", err
+	} else {
+		wingID = w.ID
+	}
+
+	// Create room if not exists on the target DB.
+	var roomID string
+	var r cobot.Room
+	rRow := db.QueryRowContext(ctx, sqlSelectRoomByName, wingID, roomName)
+	if err := rRow.Scan(&r.ID, &r.WingID, &r.Name, &r.HallType); err == sql.ErrNoRows {
+		roomID = newID()
+		if _, err := db.ExecContext(ctx, sqlInsertRoom, roomID, wingID, roomName, hallType); err != nil {
+			return "", err
+		}
+	} else if err != nil {
+		return "", err
+	} else {
+		roomID = r.ID
+	}
+
+	id := newID()
+	_, err := db.ExecContext(ctx, sqlInsertDrawer, id, roomID, content, hallType, time.Now().UTC())
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
 // StoreShortTerm stores a short-term memory item for the given session.
 // The category determines which room the item goes into:
 //   "context"/"task_state"/"decision" → "context" room
@@ -146,61 +241,87 @@ func stmRoomForCategory(category string) string {
 //   "observation"/"error"             → "observation" room
 //   "compressed"                      → "compressed" room
 func (s *Store) StoreShortTerm(ctx context.Context, sessionID, content, category string) (string, error) {
-	wingName := stmWingName(sessionID)
+	stmDB, err := s.getSTMDB(sessionID)
+	if err != nil {
+		return "", err
+	}
 	roomName := stmRoomForCategory(category)
-	return s.StoreByName(ctx, content, wingName, roomName, category)
+	return s.storeByNameOnDB(ctx, stmDB, content, stmWingName, roomName, category)
 }
 
 // RecallShortTerm retrieves all short-term memories for the given session
-// from both rooms, ordered by creation time (oldest first).
+// from all rooms, ordered by creation time (oldest first).
 func (s *Store) RecallShortTerm(ctx context.Context, sessionID string) ([]*cobot.Drawer, error) {
-	wing, err := s.GetWingByName(ctx, stmWingName(sessionID))
-	if err != nil || wing == nil {
-		return nil, nil
+	stmDB, err := s.getSTMDB(sessionID)
+	if err != nil {
+		return nil, err
 	}
 
-	rooms, err := s.GetRooms(ctx, wing.ID)
+	// Look up the session wing in the STM DB.
+	var wingID string
+	var w cobot.Wing
+	var kwJSON string
+	row := stmDB.QueryRowContext(ctx, sqlSelectWingByName, stmWingName)
+	if err := row.Scan(&w.ID, &w.Name, &w.Type, &kwJSON); err == sql.ErrNoRows {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	wingID = w.ID
+
+	// Get all rooms for this wing.
+	rows, err := stmDB.QueryContext(ctx, sqlSelectRooms, wingID)
 	if err != nil {
+		return nil, err
+	}
+	var rooms []*cobot.Room
+	for rows.Next() {
+		var r cobot.Room
+		if err := rows.Scan(&r.ID, &r.WingID, &r.Name, &r.HallType); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rooms = append(rooms, &r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
 	var all []*cobot.Drawer
 	for _, room := range rooms {
-		rows, err := s.db.QueryContext(ctx, sqlSelectDrawersByRoomOrdered, room.ID)
+		dRows, err := stmDB.QueryContext(ctx, sqlSelectDrawersByRoomOrdered, room.ID)
 		if err != nil {
 			return nil, err
 		}
-		for rows.Next() {
+		for dRows.Next() {
 			var d cobot.Drawer
-			if err := rows.Scan(&d.ID, &d.RoomID, &d.Content, &d.CreatedAt); err != nil {
-				rows.Close()
+			if err := dRows.Scan(&d.ID, &d.RoomID, &d.Content, &d.CreatedAt); err != nil {
+				dRows.Close()
 				return nil, err
 			}
 			all = append(all, &d)
 		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
+		dRows.Close()
+		if err := dRows.Err(); err != nil {
 			return nil, err
 		}
 	}
 
-	// Results are already ordered by created_at per room; return as-is.
 	return all, nil
 }
 
-// ClearShortTerm deletes the entire STM wing for the given session
-// (cascade deletes all rooms and drawers).
+// ClearShortTerm closes the per-session STM database and deletes the file.
 func (s *Store) ClearShortTerm(ctx context.Context, sessionID string) error {
-	wing, err := s.GetWingByName(ctx, stmWingName(sessionID))
-	if err != nil || wing == nil {
-		return nil
+	if err := s.closeSTMDB(sessionID); err != nil {
+		return err
 	}
-	_, err = s.db.ExecContext(ctx, "DELETE FROM wings WHERE id = ?", wing.ID)
-	return err
+	dbPath := filepath.Join(s.stmDir, sessionID+".db")
+	return os.Remove(dbPath)
 }
 
 // PromoteToLongTerm moves valuable short-term items to long-term memory
-// under the "sessions" wing, then clears the STM wing.
+// under the "sessions" wing, then deletes the STM database.
 func (s *Store) PromoteToLongTerm(ctx context.Context, sessionID string) error {
 	drawers, err := s.RecallShortTerm(ctx, sessionID)
 	if err != nil {
@@ -232,46 +353,87 @@ func (s *Store) PromoteToLongTerm(ctx context.Context, sessionID string) error {
 // room for the given session. It first clears any existing drawers in the
 // compressed room so that at most one drawer (the latest summary) exists.
 func (s *Store) StoreShortTermCompressed(ctx context.Context, sessionID, content string) (string, error) {
-	wing, err := s.GetWingByName(ctx, stmWingName(sessionID))
-	if err != nil || wing == nil {
-		// Wing doesn't exist yet; StoreByName will create it.
-		return s.StoreByName(ctx, content, stmWingName(sessionID), stmRoomCompressed, "compressed")
+	stmDB, err := s.getSTMDB(sessionID)
+	if err != nil {
+		return "", err
 	}
+
+	// Find or create the wing.
+	var wingID string
+	var w cobot.Wing
+	var kwJSON string
+	row := stmDB.QueryRowContext(ctx, sqlSelectWingByName, stmWingName)
+	if err := row.Scan(&w.ID, &w.Name, &w.Type, &kwJSON); err == sql.ErrNoRows {
+		// Wing doesn't exist yet; storeByNameOnDB will create it.
+		return s.storeByNameOnDB(ctx, stmDB, content, stmWingName, stmRoomCompressed, "compressed")
+	} else if err != nil {
+		return "", fmt.Errorf("stm compressed: get wing: %w", err)
+	}
+	wingID = w.ID
 
 	// Find or create the compressed room.
-	room, err := s.GetRoomByName(ctx, wing.ID, stmRoomCompressed)
-	if err != nil {
+	var roomID string
+	var r cobot.Room
+	rRow := stmDB.QueryRowContext(ctx, sqlSelectRoomByName, wingID, stmRoomCompressed)
+	if err := rRow.Scan(&r.ID, &r.WingID, &r.Name, &r.HallType); err == sql.ErrNoRows {
+		// Room doesn't exist yet; storeByNameOnDB will create it.
+		return s.storeByNameOnDB(ctx, stmDB, content, stmWingName, stmRoomCompressed, "compressed")
+	} else if err != nil {
 		return "", fmt.Errorf("stm compressed: get room: %w", err)
 	}
-	if room == nil {
-		// Room doesn't exist yet; StoreByName will create it.
-		return s.StoreByName(ctx, content, stmWingName(sessionID), stmRoomCompressed, "compressed")
-	}
+	roomID = r.ID
 
 	// Clear existing drawers in the compressed room.
-	_, err = s.db.ExecContext(ctx, "DELETE FROM drawers WHERE room_id = ?", room.ID)
+	_, err = stmDB.ExecContext(ctx, "DELETE FROM drawers WHERE room_id = ?", roomID)
 	if err != nil {
 		return "", fmt.Errorf("stm compressed: clear old: %w", err)
 	}
 
 	// Store the new compressed content.
-	return s.Store(ctx, content, wing.ID, room.ID)
+	id := newID()
+	_, err = stmDB.ExecContext(ctx, sqlInsertDrawer, id, roomID, content, "compressed", time.Now().UTC())
+	if err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
 // SummarizeAndPromoteSTM reads items from context, todo, notes, and observation
-// rooms (NOT compressed). If total items >= 5, it promotes them to LTM under
-// the "sessions" wing and deletes them from STM. The compressed room is left
-// untouched.
+// rooms (NOT compressed) in the per-session STM DB. If total items >= 5, it
+// promotes them to LTM under the "sessions" wing and deletes them from STM.
+// The compressed room is left untouched.
 func (s *Store) SummarizeAndPromoteSTM(ctx context.Context, sessionID string) error {
-	wing, err := s.GetWingByName(ctx, stmWingName(sessionID))
-	if err != nil || wing == nil {
-		return nil
-	}
-
-	rooms, err := s.GetRooms(ctx, wing.ID)
+	stmDB, err := s.getSTMDB(sessionID)
 	if err != nil {
 		return err
 	}
+
+	// Look up the session wing in the STM DB.
+	var wingID string
+	var w cobot.Wing
+	var kwJSON string
+	row := stmDB.QueryRowContext(ctx, sqlSelectWingByName, stmWingName)
+	if err := row.Scan(&w.ID, &w.Name, &w.Type, &kwJSON); err != nil {
+		// Wing doesn't exist — nothing to promote.
+		return nil
+	}
+	wingID = w.ID
+
+	// Get all rooms.
+	rows, err := stmDB.QueryContext(ctx, sqlSelectRooms, wingID)
+	if err != nil {
+		return err
+	}
+	var rooms []*cobot.Room
+	for rows.Next() {
+		var r cobot.Room
+		if err := rows.Scan(&r.ID, &r.WingID, &r.Name, &r.HallType); err != nil {
+			rows.Close()
+			return err
+		}
+		rooms = append(rooms, &r)
+	}
+	rows.Close()
 
 	// Rooms to promote (everything except compressed).
 	promoteRoomNames := map[string]bool{
@@ -288,19 +450,19 @@ func (s *Store) SummarizeAndPromoteSTM(ctx context.Context, sessionID string) er
 		if !promoteRoomNames[room.Name] {
 			continue
 		}
-		rows, err := s.db.QueryContext(ctx, sqlSelectDrawersByRoomOrdered, room.ID)
+		dRows, err := stmDB.QueryContext(ctx, sqlSelectDrawersByRoomOrdered, room.ID)
 		if err != nil {
 			continue
 		}
-		for rows.Next() {
+		for dRows.Next() {
 			var d cobot.Drawer
-			if err := rows.Scan(&d.ID, &d.RoomID, &d.Content, &d.CreatedAt); err != nil {
-				rows.Close()
+			if err := dRows.Scan(&d.ID, &d.RoomID, &d.Content, &d.CreatedAt); err != nil {
+				dRows.Close()
 				continue
 			}
 			allDrawers = append(allDrawers, &d)
 		}
-		rows.Close()
+		dRows.Close()
 		roomIDsToClear = append(roomIDsToClear, room.ID)
 	}
 
@@ -325,7 +487,7 @@ func (s *Store) SummarizeAndPromoteSTM(ctx context.Context, sessionID string) er
 
 	// Delete promoted items from STM (clear drawers in each promoted room).
 	for _, roomID := range roomIDsToClear {
-		_, _ = s.db.ExecContext(ctx, "DELETE FROM drawers WHERE room_id = ?", roomID)
+		_, _ = stmDB.ExecContext(ctx, "DELETE FROM drawers WHERE room_id = ?", roomID)
 	}
 
 	return nil

@@ -2,6 +2,8 @@ package memory
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,7 +12,7 @@ import (
 
 func TestOpenCloseStore(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, filepath.Join(dir, "stm"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,7 +23,7 @@ func TestOpenCloseStore(t *testing.T) {
 
 func TestWingCRUD(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, filepath.Join(dir, "stm"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +57,7 @@ func TestWingCRUD(t *testing.T) {
 
 func TestRoomCRUD(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := OpenStore(dir)
+	s, _ := OpenStore(dir, filepath.Join(dir, "stm"))
 	defer s.Close()
 
 	ctx := context.Background()
@@ -84,7 +86,7 @@ func TestRoomCRUD(t *testing.T) {
 
 func TestDrawerCRUD(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := OpenStore(dir)
+	s, _ := OpenStore(dir, filepath.Join(dir, "stm"))
 	defer s.Close()
 
 	ctx := context.Background()
@@ -104,7 +106,7 @@ func TestDrawerCRUD(t *testing.T) {
 
 func TestClosetCRUD(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := OpenStore(dir)
+	s, _ := OpenStore(dir, filepath.Join(dir, "stm"))
 	defer s.Close()
 
 	ctx := context.Background()
@@ -138,7 +140,7 @@ func TestClosetCRUD(t *testing.T) {
 
 func TestFTS5Search(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := OpenStore(dir)
+	s, _ := OpenStore(dir, filepath.Join(dir, "stm"))
 	defer s.Close()
 
 	ctx := context.Background()
@@ -164,7 +166,7 @@ func TestFTS5Search(t *testing.T) {
 
 func TestStoreAndSearch(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := OpenStore(dir)
+	s, _ := OpenStore(dir, filepath.Join(dir, "stm"))
 	defer s.Close()
 
 	ctx := context.Background()
@@ -199,7 +201,7 @@ func TestStoreAndSearch(t *testing.T) {
 
 func TestStoreAndSearchMultiple(t *testing.T) {
 	dir := t.TempDir()
-	s, _ := OpenStore(dir)
+	s, _ := OpenStore(dir, filepath.Join(dir, "stm"))
 	defer s.Close()
 
 	ctx := context.Background()
@@ -231,7 +233,7 @@ func TestStoreAndSearchMultiple(t *testing.T) {
 
 func TestL3DeepSearch(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, filepath.Join(dir, "stm"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +278,7 @@ func TestL3DeepSearch(t *testing.T) {
 
 func TestSummarizeContent(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, filepath.Join(dir, "stm"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,7 +312,7 @@ func TestSummarizeContent(t *testing.T) {
 
 func TestAutoSummarizeRoom(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, filepath.Join(dir, "stm"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,5 +357,191 @@ func TestAutoSummarizeRoom(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected closet with summary containing note content")
+	}
+}
+
+// --- Per-session STM tests ---
+
+func TestSTMPerSessionDBCreation(t *testing.T) {
+	dir := t.TempDir()
+	stmDir := filepath.Join(dir, "stm")
+	s, err := OpenStore(dir, stmDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// Store STM items for two sessions.
+	_, err = s.StoreShortTerm(ctx, "session-1", "hello from session 1", "context")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.StoreShortTerm(ctx, "session-2", "hello from session 2", "note")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify STM DB files were created.
+	if _, err := os.Stat(filepath.Join(stmDir, "session-1.db")); err != nil {
+		t.Errorf("session-1.db not created: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stmDir, "session-2.db")); err != nil {
+		t.Errorf("session-2.db not created: %v", err)
+	}
+
+	// Verify LTM DB has no STM wings.
+	wings, err := s.GetWings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range wings {
+		if w.Name == "session" || w.Name == "stm_session-1" || w.Name == "stm_session-2" {
+			t.Errorf("LTM DB should not contain STM wing %q", w.Name)
+		}
+	}
+}
+
+func TestSTMDataIsolatedBetweenSessions(t *testing.T) {
+	dir := t.TempDir()
+	stmDir := filepath.Join(dir, "stm")
+	s, err := OpenStore(dir, stmDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// Store items in two different sessions.
+	s.StoreShortTerm(ctx, "alpha", "alpha context data", "context")
+	s.StoreShortTerm(ctx, "alpha", "alpha observation data", "observation")
+	s.StoreShortTerm(ctx, "beta", "beta context data", "context")
+
+	// Recall from alpha should only have alpha data.
+	alphaDrawers, err := s.RecallShortTerm(ctx, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(alphaDrawers) != 2 {
+		t.Fatalf("expected 2 drawers for alpha, got %d", len(alphaDrawers))
+	}
+	for _, d := range alphaDrawers {
+		if !strings.Contains(d.Content, "alpha") {
+			t.Errorf("alpha session should not contain beta data: %s", d.Content)
+		}
+	}
+
+	// Recall from beta should only have beta data.
+	betaDrawers, err := s.RecallShortTerm(ctx, "beta")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(betaDrawers) != 1 {
+		t.Fatalf("expected 1 drawer for beta, got %d", len(betaDrawers))
+	}
+	if !strings.Contains(betaDrawers[0].Content, "beta") {
+		t.Errorf("beta session should contain beta data: %s", betaDrawers[0].Content)
+	}
+}
+
+func TestSTMPromoteToLTM(t *testing.T) {
+	dir := t.TempDir()
+	stmDir := filepath.Join(dir, "stm")
+	s, err := OpenStore(dir, stmDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// Store items in STM.
+	s.StoreShortTerm(ctx, "promote-test", "important fact from session", "context")
+	s.StoreShortTerm(ctx, "promote-test", "another fact from session", "note")
+
+	// Verify STM has items.
+	drawers, err := s.RecallShortTerm(ctx, "promote-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(drawers) != 2 {
+		t.Fatalf("expected 2 STM drawers, got %d", len(drawers))
+	}
+
+	// Promote to LTM.
+	if err := s.PromoteToLongTerm(ctx, "promote-test"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify STM DB was deleted.
+	if _, err := os.Stat(filepath.Join(stmDir, "promote-test.db")); !os.IsNotExist(err) {
+		t.Error("STM DB file should be deleted after promotion")
+	}
+
+	// Verify LTM has the promoted items under "sessions" wing.
+	wing, err := s.GetWingByName(ctx, "sessions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wing == nil {
+		t.Fatal("expected 'sessions' wing in LTM after promotion")
+	}
+	rooms, err := s.GetRooms(ctx, wing.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rooms) == 0 {
+		t.Fatal("expected at least one room in 'sessions' wing")
+	}
+
+	// Search for promoted content in LTM.
+	results, err := s.Search(ctx, &cobot.SearchQuery{Text: "important fact"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) == 0 {
+		t.Error("expected promoted content to be searchable in LTM")
+	}
+}
+
+func TestSTMCleanupOnClear(t *testing.T) {
+	dir := t.TempDir()
+	stmDir := filepath.Join(dir, "stm")
+	s, err := OpenStore(dir, stmDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// Store an item.
+	s.StoreShortTerm(ctx, "cleanup-test", "temporary data", "context")
+
+	// Verify file exists.
+	dbPath := filepath.Join(stmDir, "cleanup-test.db")
+	if _, err := os.Stat(dbPath); err != nil {
+		t.Fatalf("STM DB file not created: %v", err)
+	}
+
+	// Clear STM.
+	if err := s.ClearShortTerm(ctx, "cleanup-test"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify file is deleted.
+	if _, err := os.Stat(dbPath); !os.IsNotExist(err) {
+		t.Error("STM DB file should be deleted after ClearShortTerm")
+	}
+
+	// Recall should return nil (DB was deleted, getSTMDB will create fresh empty one).
+	drawers, err := s.RecallShortTerm(ctx, "cleanup-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(drawers) != 0 {
+		t.Errorf("expected 0 drawers after clear, got %d", len(drawers))
 	}
 }

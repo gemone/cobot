@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -16,18 +17,9 @@ func (s *Store) WakeUp(ctx context.Context) (string, error) {
 func (s *Store) WakeUpWithDeepSearch(ctx context.Context, deepSearch bool) (string, error) {
 	identity := cobot.DefaultSystemPrompt
 
-	allWings, err := s.GetWings(ctx)
+	wings, err := s.GetWings(ctx)
 	if err != nil {
 		return "", err
-	}
-
-	// Filter out STM wings — sessions only see their own STM (via WakeUpSTM),
-	// and LTM should not leak ephemeral data from other sessions.
-	wings := make([]*cobot.Wing, 0, len(allWings))
-	for _, w := range allWings {
-		if !strings.HasPrefix(w.Name, stmWingPrefix) {
-			wings = append(wings, w)
-		}
 	}
 
 	var sections []string
@@ -135,12 +127,37 @@ func (s *Store) collectRoomRecall(ctx context.Context, wings []*cobot.Wing) []st
 // This should be called every turn to get fresh STM context.
 // It returns an empty string if there are no STM items.
 func (s *Store) WakeUpSTM(ctx context.Context, sessionID string) (string, error) {
-	wing, err := s.GetWingByName(ctx, stmWingName(sessionID))
-	if err != nil || wing == nil {
+	stmDB, err := s.getSTMDB(sessionID)
+	if err != nil {
+		return "", nil // no STM DB, return empty
+	}
+
+	// Look up the session wing in the STM DB.
+	var w cobot.Wing
+	var kwJSON string
+	row := stmDB.QueryRowContext(ctx, sqlSelectWingByName, stmWingName)
+	if err := row.Scan(&w.ID, &w.Name, &w.Type, &kwJSON); err == sql.ErrNoRows {
+		return "", nil
+	} else if err != nil {
 		return "", nil
 	}
 
-	rooms, err := s.GetRooms(ctx, wing.ID)
+	rooms, err := func() ([]*cobot.Room, error) {
+		rows, err := stmDB.QueryContext(ctx, sqlSelectRooms, w.ID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var rooms []*cobot.Room
+		for rows.Next() {
+			var r cobot.Room
+			if err := rows.Scan(&r.ID, &r.WingID, &r.Name, &r.HallType); err != nil {
+				return nil, err
+			}
+			rooms = append(rooms, &r)
+		}
+		return rooms, rows.Err()
+	}()
 	if err != nil {
 		return "", err
 	}
@@ -174,7 +191,7 @@ func (s *Store) WakeUpSTM(ctx context.Context, sessionID string) (string, error)
 			continue
 		}
 
-		rows, err := s.db.QueryContext(ctx, sqlSelectDrawersByRoomOrdered, room.ID)
+		rows, err := stmDB.QueryContext(ctx, sqlSelectDrawersByRoomOrdered, room.ID)
 		if err != nil {
 			continue
 		}

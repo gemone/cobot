@@ -7,7 +7,6 @@ WHERE drawer_fts MATCH ?
 {{- if .Tier1}} AND r.wing_id = ?{{end}}
 {{- if .Tier2}} AND r.id = ?{{end}}
 {{- if .Tag}} AND d.tag = ?{{end}}
-{{- if .ExcludeSTM}} AND r.wing_id NOT LIKE 'stm_%'{{end}}
 ORDER BY score DESC LIMIT ?
 
 -- name: list_drawers
@@ -18,5 +17,4 @@ WHERE 1=1
 {{- if .Tier1}} AND r.wing_id = ?{{end}}
 {{- if .Tier2}} AND r.id = ?{{end}}
 {{- if .Tag}} AND d.tag = ?{{end}}
-{{- if .ExcludeSTM}} AND r.wing_id NOT LIKE 'stm_%'{{end}}
 ORDER BY d.created_at DESC LIMIT ?

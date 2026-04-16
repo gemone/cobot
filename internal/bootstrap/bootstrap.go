@@ -122,7 +122,7 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 		}
 	}
 	dataDir := ws.MemoryDir()
-	store, err := memory.OpenStore(dataDir)
+	store, err := memory.OpenStore(dataDir, ws.STMDir())
 	if err != nil {
 		slog.Warn("failed to open memory store", "err", err)
 	} else {

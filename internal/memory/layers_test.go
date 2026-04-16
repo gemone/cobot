@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,7 +11,7 @@ import (
 
 func TestWakeUpBasic(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, filepath.Join(dir, "stm"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +29,7 @@ func TestWakeUpBasic(t *testing.T) {
 
 func TestWakeUpWithFacts(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, filepath.Join(dir, "stm"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +58,7 @@ func TestWakeUpWithFacts(t *testing.T) {
 
 func TestWakeUpWithRoomContext(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, filepath.Join(dir, "stm"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +93,7 @@ func TestWakeUpWithRoomContext(t *testing.T) {
 
 func TestWakeUpIgnoresNonFactsInFactsSection(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, filepath.Join(dir, "stm"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +122,7 @@ func TestWakeUpIgnoresNonFactsInFactsSection(t *testing.T) {
 
 func TestWakeUpWithDeepSearch(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, filepath.Join(dir, "stm"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,7 +11,7 @@ import (
 
 func TestMemorySearchTool(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, filepath.Join(dir, "stm"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +44,7 @@ func TestMemorySearchTool(t *testing.T) {
 
 func TestMemoryStoreTool(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, filepath.Join(dir, "stm"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +89,7 @@ func TestMemoryStoreTool(t *testing.T) {
 
 func TestMemoryStoreToolAutoCreate(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, filepath.Join(dir, "stm"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +127,7 @@ func TestMemoryStoreToolAutoCreate(t *testing.T) {
 
 func TestMemorySearchToolNoResults(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, filepath.Join(dir, "stm"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +147,7 @@ func TestMemorySearchToolNoResults(t *testing.T) {
 
 func TestMemorySearchToolWithWingFilter(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, filepath.Join(dir, "stm"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +179,7 @@ func TestMemorySearchToolWithWingFilter(t *testing.T) {
 
 func TestMemoryStoreToolInvalidArgs(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, filepath.Join(dir, "stm"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +196,7 @@ func TestMemoryStoreToolInvalidArgs(t *testing.T) {
 
 func TestMemorySearchToolInvalidArgs(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, filepath.Join(dir, "stm"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +213,7 @@ func TestMemorySearchToolInvalidArgs(t *testing.T) {
 
 func TestMemoryStoreToolDefaultHallType(t *testing.T) {
 	dir := t.TempDir()
-	s, err := OpenStore(dir)
+	s, err := OpenStore(dir, filepath.Join(dir, "stm"))
 	if err != nil {
 		t.Fatal(err)
 	}
