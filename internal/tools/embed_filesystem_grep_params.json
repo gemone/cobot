@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "properties": {
+    "path": {
+      "type": "string",
+      "description": "Root directory to search in"
+    },
+    "pattern": {
+      "type": "string",
+      "description": "Regular expression pattern to search for in file contents"
+    },
+    "include": {
+      "type": "string",
+      "description": "Optional glob pattern to filter files by name (e.g. *.go, *.md). Searches all non-binary files if omitted."
+    },
+    "max_results": {
+      "type": "integer",
+      "description": "Maximum number of matching files to return (default 50)"
+    }
+  },
+  "required": ["path", "pattern"]
+}

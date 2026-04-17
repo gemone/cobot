@@ -7,7 +7,11 @@
     },
     "pattern": {
       "type": "string",
-      "description": "File name pattern or glob to search for (e.g. *.go, README*)"
+      "description": "File name pattern or glob to search for (e.g. *.go, config.*). Supports glob syntax."
+    },
+    "max_results": {
+      "type": "integer",
+      "description": "Maximum number of results to return (default 50)"
     }
   },
   "required": ["path", "pattern"]

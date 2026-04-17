@@ -162,6 +162,7 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	a.RegisterTool(tools.NewWriteFileTool(sandbox))
 	a.RegisterTool(tools.NewListDirTool(sandbox))
 	a.RegisterTool(tools.NewSearchFilesTool(sandbox))
+	a.RegisterTool(tools.NewGrepFilesTool(sandbox))
 
 	// Shell tool needs AllowNetwork too
 	shellSandbox := *sandbox
