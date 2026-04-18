@@ -31,15 +31,17 @@ var skillUpdateParamsJSON []byte
 
 const maxPersonaSize = 64 * 1024 // 64 KB
 
+// sandboxDescSuffix appends a sandbox path suffix to a description if sandbox is configured.
+func sandboxDescSuffix(sandbox *cobot.SandboxConfig, desc, pathSuffix string) string {
+	if sandbox != nil && sandbox.VirtualRoot != "" {
+		return desc + fmt.Sprintf(". Files are stored under %s/%s", sandbox.VirtualRoot, pathSuffix)
+	}
+	return desc
+}
+
 type WorkspaceConfigUpdateTool struct {
 	workspace *workspace.Workspace
 	sandbox   *cobot.SandboxConfig
-}
-
-type WorkspaceConfigUpdateToolOption func(*WorkspaceConfigUpdateTool)
-
-func WithWorkspaceSandbox(s *cobot.SandboxConfig) WorkspaceConfigUpdateToolOption {
-	return func(t *WorkspaceConfigUpdateTool) { t.sandbox = s }
 }
 
 func (t *WorkspaceConfigUpdateTool) Name() string { return "workspace_config_update" }
@@ -105,11 +107,7 @@ type SkillCreateTool struct {
 
 func (t *SkillCreateTool) Name() string { return "skill_create" }
 func (t *SkillCreateTool) Description() string {
-	desc := "Create a new skill in the workspace skills directory"
-	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-		desc += fmt.Sprintf(". Files are stored under %s/skills/", t.sandbox.VirtualRoot)
-	}
-	return desc
+	return sandboxDescSuffix(t.sandbox, "Create a new skill in the workspace skills directory", "skills/")
 }
 
 func (t *SkillCreateTool) Parameters() json.RawMessage {
@@ -165,11 +163,7 @@ type PersonaUpdateTool struct {
 
 func (t *PersonaUpdateTool) Name() string { return "persona_update" }
 func (t *PersonaUpdateTool) Description() string {
-	desc := "Update SOUL.md or USER.md persona files"
-	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-		desc += fmt.Sprintf(". Files are stored under %s/", t.sandbox.VirtualRoot)
-	}
-	return desc
+	return sandboxDescSuffix(t.sandbox, "Update SOUL.md or USER.md persona files", "")
 }
 
 func (t *PersonaUpdateTool) Parameters() json.RawMessage {
@@ -213,11 +207,11 @@ type AgentConfigUpdateTool struct {
 
 func (t *AgentConfigUpdateTool) Name() string { return "agent_config_update" }
 func (t *AgentConfigUpdateTool) Description() string {
-	desc := "Update an agent's configuration file in the workspace"
 	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-		desc += fmt.Sprintf(". Config files are stored under %s/agents/", t.sandbox.VirtualRoot)
+		return "Update an agent's configuration file in the workspace" +
+			fmt.Sprintf(". Config files are stored under %s/agents/", t.sandbox.VirtualRoot)
 	}
-	return desc
+	return "Update an agent's configuration file in the workspace"
 }
 
 func (t *AgentConfigUpdateTool) Parameters() json.RawMessage {
@@ -278,11 +272,7 @@ type SkillUpdateTool struct {
 
 func (t *SkillUpdateTool) Name() string { return "skill_update" }
 func (t *SkillUpdateTool) Description() string {
-	desc := "Update an existing skill in the workspace skills directory"
-	if t.sandbox != nil && t.sandbox.VirtualRoot != "" {
-		desc += fmt.Sprintf(". Files are stored under %s/skills/", t.sandbox.VirtualRoot)
-	}
-	return desc
+	return sandboxDescSuffix(t.sandbox, "Update an existing skill in the workspace skills directory", "skills/")
 }
 
 func (t *SkillUpdateTool) Parameters() json.RawMessage {

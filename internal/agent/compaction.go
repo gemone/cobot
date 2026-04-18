@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 
+	"github.com/cobot-agent/cobot/internal/memory"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -15,13 +15,13 @@ func (a *Agent) checkAndCompress(ctx context.Context) {
 	}
 
 	sm := a.sessionMgr
-	action := a.compressor.Check(sm.usageTracker.Get(), sm.turnCount)
+	action := a.compressor.Check(sm.usageTracker.Get(), int(sm.turnCount.Load()))
 	if action == CompressNone {
 		return
 	}
 
 	msgs, snapshotLen := sm.session.MessagesSnapshot()
-	slog.Debug("compression triggered", "action", action, "turns", sm.turnCount, "total_tokens", sm.usageTracker.Get().TotalTokens, "messages", len(msgs))
+	slog.Debug("compression triggered", "action", action, "turns", sm.turnCount.Load(), "total_tokens", sm.usageTracker.Get().TotalTokens, "messages", len(msgs))
 
 	go a.runCompress(ctx, action, msgs, snapshotLen)
 }
@@ -36,7 +36,9 @@ func (a *Agent) promoteSTMBackground(ctx context.Context) {
 	if !ok {
 		return
 	}
+	a.bgWg.Add(1)
 	go func() {
+		defer a.bgWg.Done()
 		if err := stm.SummarizeAndPromoteSTM(ctx, sm.sessionID); err != nil {
 			slog.Debug("periodic STM promotion failed", "err", err)
 		}
@@ -133,79 +135,15 @@ func (a *Agent) extractMemories(ctx context.Context, summary string, originalMsg
 	}
 
 	model := a.compressorModel()
-	provider := a.provider
+	extractor := memory.NewExtractor(store, a.provider, model)
 
+	a.bgWg.Add(1)
 	go func() {
-		if err := a.doExtractMemoriesWith(ctx, summary, originalMsgs, model, store, provider); err != nil {
+		defer a.bgWg.Done()
+		if err := extractor.Extract(ctx, summary, originalMsgs); err != nil {
 			slog.Debug("memory extraction failed", "err", err)
 		}
 	}()
-}
-
-func (a *Agent) doExtractMemoriesWith(ctx context.Context, summary string, originalMsgs []cobot.Message, model string, store cobot.MemoryStore, provider cobot.Provider) error {
-	var conversationBuf strings.Builder
-	for i, m := range originalMsgs {
-		if m.Role == cobot.RoleSystem {
-			continue
-		}
-		if i >= 40 {
-			conversationBuf.WriteString(fmt.Sprintf("\n... (%d more messages omitted)\n", len(originalMsgs)-40))
-			break
-		}
-		conversationBuf.WriteString(fmt.Sprintf("[%s]: %s\n", m.Role, cobot.Truncate(m.Content, 300)))
-		for _, tc := range m.ToolCalls {
-			conversationBuf.WriteString(fmt.Sprintf("  tool_call: %s\n", tc.Name))
-		}
-		if m.ToolResult != nil && m.ToolResult.Output != "" {
-			conversationBuf.WriteString(fmt.Sprintf("  tool_result: %s\n", cobot.Truncate(m.ToolResult.Output, 200)))
-		}
-	}
-
-	userContent := fmt.Sprintf(
-		"<summary>\n%s\n</summary>\n\n<conversation>\n%s\n</conversation>",
-		summary,
-		conversationBuf.String(),
-	)
-
-	req := &cobot.ProviderRequest{
-		Model: model,
-		Messages: []cobot.Message{
-			{Role: cobot.RoleSystem, Content: memoryExtractionPrompt},
-			{Role: cobot.RoleUser, Content: userContent},
-		},
-	}
-
-	resp, err := provider.Complete(ctx, req)
-	if err != nil {
-		return fmt.Errorf("memory extraction LLM call: %w", err)
-	}
-
-	items := parseExtractionResponse(resp.Content)
-	if len(items) == 0 {
-		slog.Debug("memory extraction: no items extracted")
-		return nil
-	}
-
-	stored := 0
-	rooms := make(map[string]struct{})
-	for _, item := range items {
-		_, err := store.StoreByName(ctx, item.content, "sessions", item.room, item.hallType)
-		if err != nil {
-			slog.Debug("memory extraction: store failed", "room", item.room, "err", err)
-			continue
-		}
-		rooms[item.room] = struct{}{}
-		stored++
-	}
-
-	for room := range rooms {
-		if err := store.ConsolidateByName(ctx, "sessions", room); err != nil {
-			slog.Debug("memory consolidation failed", "room", room, "err", err)
-		}
-	}
-
-	slog.Debug("memory extraction complete", "extracted", len(items), "stored", stored)
-	return nil
 }
 
 func (a *Agent) compressorModel() string {
@@ -214,80 +152,3 @@ func (a *Agent) compressorModel() string {
 	}
 	return a.config.Model
 }
-
-type memoryItem struct {
-	content  string
-	room     string
-	hallType string
-}
-
-// parseExtractionResponse parses the structured LLM response into memory items.
-// Expected format: [FACT], [DECISION], [PATTERN], [PREFERENCE] prefixed lines.
-func parseExtractionResponse(response string) []memoryItem {
-	lines := strings.Split(strings.TrimSpace(response), "\n")
-	var items []memoryItem
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-
-		var room, hallType string
-		switch {
-		case strings.HasPrefix(line, "[FACT]"):
-			line = strings.TrimPrefix(line, "[FACT]")
-			room = "facts"
-			hallType = cobot.TagFacts
-		case strings.HasPrefix(line, "[DECISION]"):
-			line = strings.TrimPrefix(line, "[DECISION]")
-			room = "decisions"
-			hallType = cobot.TagFacts
-		case strings.HasPrefix(line, "[PATTERN]"):
-			line = strings.TrimPrefix(line, "[PATTERN]")
-			room = "patterns"
-			hallType = cobot.TagCode
-		case strings.HasPrefix(line, "[PREFERENCE]"):
-			line = strings.TrimPrefix(line, "[PREFERENCE]")
-			room = "preferences"
-			hallType = cobot.TagFacts
-		default:
-			continue
-		}
-
-		content := strings.TrimSpace(line)
-		if content == "" {
-			continue
-		}
-
-		items = append(items, memoryItem{
-			content:  content,
-			room:     room,
-			hallType: hallType,
-		})
-	}
-
-	return items
-}
-
-const memoryExtractionPrompt = `You are a memory extraction engine. Given a conversation summary and the original conversation, extract the most important items worth remembering for future sessions.
-
-Extract ONLY items that are:
-- Durable: still relevant in future conversations (not ephemeral status updates)
-- Specific: contain concrete names, paths, numbers, or decisions (not vague observations)
-- Actionable: inform future behavior or decisions
-
-Categorize each item with exactly one tag:
-- [FACT] — A concrete fact about the project, codebase, user, or environment
-- [DECISION] — A decision made and its rationale
-- [PATTERN] — A code pattern, convention, or architectural approach established
-- [PREFERENCE] — A user preference about workflow, style, or tooling
-
-Output one item per line, prefixed with its tag. No numbering, no bullets, no commentary.
-If nothing is worth extracting, output a single line: NONE
-
-Examples:
-[FACT] The project uses SQLite with WAL mode for the MemPalace memory backend
-[DECISION] Session compression threshold set to 70% of context window because lower values caused too-frequent compression
-[PATTERN] Error handling in providers follows: wrap with fmt.Errorf("method: %w", err), never suppress
-[PREFERENCE] User prefers Chinese for discussion but English for code comments`

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	cobot "github.com/cobot-agent/cobot/pkg"
@@ -56,6 +57,7 @@ type SessionData struct {
 
 type SessionStore struct {
 	dir string
+	mu  sync.Mutex
 }
 
 func NewSessionStore(dir string) *SessionStore {
@@ -67,6 +69,9 @@ func NewSessionStore(dir string) *SessionStore {
 // InitSession writes the first line (session metadata) to a new JSONL file.
 // It is idempotent: if the file already exists, it does nothing.
 func (s *SessionStore) InitSession(id, model string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	path := s.path(id)
 	entry := SessionEntry{
 		Type:      EntrySession,
@@ -127,6 +132,9 @@ func (s *SessionStore) AppendCompact(id string, marker CompactMarker) error {
 // Save provides backward-compatible full-session save. It rewrites the entire
 // session as a fresh JSONL file. Prefer the append methods for incremental writes.
 func (s *SessionStore) Save(id string, session *Session, usage cobot.Usage, model string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	path := s.path(id)
 	now := time.Now()
 
@@ -325,6 +333,9 @@ func (s *SessionStore) path(id string) string {
 }
 
 func (s *SessionStore) appendEntry(path string, entry SessionEntry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("open session file: %w", err)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"fmt"
 	"strings"
 	"text/template"
 
@@ -26,11 +27,11 @@ type searchTmplData struct {
 
 // renderSearchSQL renders a named section from search.sql.tmpl.
 // The template file contains sections separated by "-- name: <name>".
-func renderSearchSQL(name string, data searchTmplData) string {
+func renderSearchSQL(name string, data searchTmplData) (string, error) {
 	// Parse sections from template output.
 	var buf bytes.Buffer
 	if err := searchTemplates.Execute(&buf, data); err != nil {
-		panic("render search SQL: " + err.Error())
+		return "", fmt.Errorf("render search SQL: %w", err)
 	}
 	full := buf.String()
 
@@ -38,13 +39,13 @@ func renderSearchSQL(name string, data searchTmplData) string {
 	marker := "-- name: " + name
 	_, section, found := strings.Cut(full, marker)
 	if !found {
-		panic("search SQL section not found: " + name)
+		return "", fmt.Errorf("search SQL section not found: %s", name)
 	}
 	// Trim until next section or end.
 	if nextIdx := strings.Index(section, "\n-- name: "); nextIdx >= 0 {
 		section = section[:nextIdx]
 	}
-	return strings.TrimSpace(section)
+	return strings.TrimSpace(section), nil
 }
 
 // searchDrawers performs FTS5 full-text search on drawers, with optional
@@ -65,7 +66,10 @@ func (s *Store) searchDrawers(ctx context.Context, query *cobot.SearchQuery) ([]
 		Tier2: query.Tier2 != "",
 		Tag:   query.Tag != "",
 	}
-	sql := renderSearchSQL("search_drawers", data)
+	sql, err := renderSearchSQL("search_drawers", data)
+	if err != nil {
+		return nil, err
+	}
 
 	args := []any{query.Text}
 	if query.Tier1 != "" {
@@ -103,7 +107,10 @@ func (s *Store) listDrawers(ctx context.Context, query *cobot.SearchQuery, limit
 		Tier2: query.Tier2 != "",
 		Tag:   query.Tag != "",
 	}
-	sql := renderSearchSQL("list_drawers", data)
+	sql, err := renderSearchSQL("list_drawers", data)
+	if err != nil {
+		return nil, err
+	}
 
 	var args []any
 	if query.Tier1 != "" {

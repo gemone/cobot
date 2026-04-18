@@ -18,9 +18,7 @@ var memoryStoreParamsJSON []byte
 //go:embed embed_l3_deep_search_params.json
 var l3DeepSearchParamsJSON []byte
 
-func decodeArgs(args json.RawMessage, v any) error {
-	return json.Unmarshal(args, v)
-}
+var decodeArgs = cobot.DecodeToolArgs
 
 type memorySearchArgs struct {
 	Query string `json:"query"`
@@ -33,16 +31,12 @@ type MemorySearchTool struct {
 	sandbox *cobot.SandboxConfig
 }
 
-func NewMemorySearchTool(s *Store, opts ...func(*MemorySearchTool)) *MemorySearchTool {
+func NewMemorySearchTool(s *Store, sandbox ...*cobot.SandboxConfig) *MemorySearchTool {
 	t := &MemorySearchTool{store: s}
-	for _, opt := range opts {
-		opt(t)
+	if len(sandbox) > 0 {
+		t.sandbox = sandbox[0]
 	}
 	return t
-}
-
-func WithMemorySearchSandbox(sb *cobot.SandboxConfig) func(*MemorySearchTool) {
-	return func(t *MemorySearchTool) { t.sandbox = sb }
 }
 
 func (t *MemorySearchTool) Name() string { return "memory_search" }
@@ -93,16 +87,12 @@ type MemoryStoreTool struct {
 	sandbox *cobot.SandboxConfig
 }
 
-func NewMemoryStoreTool(s *Store, opts ...func(*MemoryStoreTool)) *MemoryStoreTool {
+func NewMemoryStoreTool(s *Store, sandbox ...*cobot.SandboxConfig) *MemoryStoreTool {
 	t := &MemoryStoreTool{store: s}
-	for _, opt := range opts {
-		opt(t)
+	if len(sandbox) > 0 {
+		t.sandbox = sandbox[0]
 	}
 	return t
-}
-
-func WithMemoryStoreSandbox(sb *cobot.SandboxConfig) func(*MemoryStoreTool) {
-	return func(t *MemoryStoreTool) { t.sandbox = sb }
 }
 
 func (t *MemoryStoreTool) Name() string        { return "memory_store" }
@@ -152,16 +142,12 @@ type L3DeepSearchTool struct {
 	sandbox *cobot.SandboxConfig
 }
 
-func NewL3DeepSearchTool(s *Store, opts ...func(*L3DeepSearchTool)) *L3DeepSearchTool {
+func NewL3DeepSearchTool(s *Store, sandbox ...*cobot.SandboxConfig) *L3DeepSearchTool {
 	t := &L3DeepSearchTool{store: s}
-	for _, opt := range opts {
-		opt(t)
+	if len(sandbox) > 0 {
+		t.sandbox = sandbox[0]
 	}
 	return t
-}
-
-func WithL3DeepSearchSandbox(sb *cobot.SandboxConfig) func(*L3DeepSearchTool) {
-	return func(t *L3DeepSearchTool) { t.sandbox = sb }
 }
 
 func (t *L3DeepSearchTool) Name() string { return "l3_deep_search" }
@@ -201,12 +187,4 @@ var (
 	_ cobot.Tool = (*L3DeepSearchTool)(nil)
 )
 
-// sandboxRewriteError sanitizes error messages by replacing real filesystem paths
-// with virtual paths when a sandbox is configured. This prevents leaking real DB
-// paths or other filesystem details to the LLM via error messages.
-func sandboxRewriteError(sandbox *cobot.SandboxConfig, err error) error {
-	if sandbox == nil || sandbox.VirtualRoot == "" || err == nil {
-		return err
-	}
-	return fmt.Errorf("%s", sandbox.RewriteOutputPaths(err.Error()))
-}
+var sandboxRewriteError = (*cobot.SandboxConfig).RewriteError

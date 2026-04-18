@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 
 	"github.com/google/uuid"
 
@@ -17,7 +18,7 @@ type SessionManager struct {
 	sessionID    string
 	sessionStore *SessionStore
 	usageTracker *UsageTracker
-	turnCount    int
+	turnCount    atomic.Int64
 
 	memoryStore        cobot.MemoryStore
 	memoryRecall       cobot.MemoryRecall
@@ -71,7 +72,7 @@ func (sm *SessionManager) persistSession(model string) {
 		return
 	}
 	if err := sm.sessionStore.Save(sm.sessionID, sm.session, sm.usageTracker.Get(), model); err != nil {
-		slog.Debug("failed to persist session", "err", err)
+		slog.Warn("failed to persist session", "err", err)
 	}
 }
 
@@ -81,11 +82,11 @@ func (sm *SessionManager) persistMessage(m cobot.Message, model string) {
 		return
 	}
 	if err := sm.sessionStore.InitSession(sm.sessionID, model); err != nil {
-		slog.Debug("failed to init session", "err", err)
+		slog.Warn("failed to init session", "err", err)
 		return
 	}
 	if err := sm.sessionStore.AppendMessage(sm.sessionID, m); err != nil {
-		slog.Debug("failed to persist message", "err", err)
+		slog.Warn("failed to persist message", "err", err)
 	}
 }
 
@@ -95,7 +96,7 @@ func (sm *SessionManager) PersistUsage() {
 		return
 	}
 	if err := sm.sessionStore.AppendUsage(sm.sessionID, sm.usageTracker.Get()); err != nil {
-		slog.Debug("failed to persist usage", "err", err)
+		slog.Warn("failed to persist usage", "err", err)
 	}
 }
 

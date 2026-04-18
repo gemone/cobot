@@ -1,6 +1,8 @@
 package openai
 
 import (
+	"context"
+	"io"
 	"strings"
 	"testing"
 
@@ -19,7 +21,7 @@ func TestReadStreamSingleToolCall(t *testing.T) {
 		"data: [DONE]",
 	}, "\n") + "\n"
 
-	sse := base.NewSSEScanner(strings.NewReader(sseData))
+	sse := base.NewSSEScannerWithContext(context.Background(), io.NopCloser(strings.NewReader(sseData)), 0)
 	ch := make(chan cobot.ProviderChunk, 64)
 
 	p := &Provider{}
@@ -88,7 +90,7 @@ func TestReadStreamMultipleToolCalls(t *testing.T) {
 		"data: [DONE]",
 	}, "\n") + "\n"
 
-	sse := base.NewSSEScanner(strings.NewReader(sseData))
+	sse := base.NewSSEScannerWithContext(context.Background(), io.NopCloser(strings.NewReader(sseData)), 0)
 	ch := make(chan cobot.ProviderChunk, 64)
 
 	p := &Provider{}
@@ -133,7 +135,7 @@ func TestReadStreamTextOnly(t *testing.T) {
 		"data: [DONE]",
 	}, "\n") + "\n"
 
-	sse := base.NewSSEScanner(strings.NewReader(sseData))
+	sse := base.NewSSEScannerWithContext(context.Background(), io.NopCloser(strings.NewReader(sseData)), 0)
 	ch := make(chan cobot.ProviderChunk, 64)
 
 	p := &Provider{}

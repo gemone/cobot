@@ -116,12 +116,25 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	agentCfg, _ := resolveAgentConfig(ws)
 	sm := a.SessionMgr()
 
+	configureSystemPrompt(agentCfg, sm, ws)
+	configureSkills(agentCfg, sm, ws)
+	store := configureMemory(sm, ws)
+	sandbox := configureSandboxTools(a, ws, agentCfg)
+	configureMemoryTools(a, store, sandbox)
+	configureDelegateTool(a, ws, registry, sandbox)
+	configureCronTool(a, ws, store, registry)
+
+	return nil
+}
+
+func configureSystemPrompt(agentCfg *config.AgentConfig, sm *agent.SessionManager, ws *workspace.Workspace) {
 	if agentCfg != nil && agentCfg.SystemPrompt != "" {
 		prompt := resolveSystemPrompt(agentCfg.SystemPrompt, ws)
 		_ = sm.SetSystemPrompt(prompt)
 	}
+}
 
-	// --- skills ---
+func configureSkills(agentCfg *config.AgentConfig, sm *agent.SessionManager, ws *workspace.Workspace) {
 	var enabledSkills []string
 	if agentCfg != nil {
 		enabledSkills = agentCfg.EnabledSkills
@@ -140,8 +153,9 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 			_ = sm.SetSystemPrompt(currentPrompt + "\n\n" + skillSection)
 		}
 	}
+}
 
-	// --- memory ---
+func configureMemory(sm *agent.SessionManager, ws *workspace.Workspace) *memory.Store {
 	if old := sm.MemoryStore(); old != nil {
 		if err := old.Close(); err != nil {
 			slog.Warn("failed to close memory store", "err", err)
@@ -150,12 +164,14 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	store, err := memory.OpenStore(ws.DataDir, ws.SessionsDir())
 	if err != nil {
 		slog.Warn("failed to open memory store", "err", err)
-	} else {
-		sm.SetMemoryStore(store)
-		sm.SetMemoryRecall(store)
+		return nil
 	}
+	sm.SetMemoryStore(store)
+	sm.SetMemoryRecall(store)
+	return store
+}
 
-	// --- sandbox ---
+func configureSandboxTools(a *agent.Agent, ws *workspace.Workspace, agentCfg *config.AgentConfig) *cobot.SandboxConfig {
 	var agentSandbox *cobot.SandboxConfig
 	if agentCfg != nil {
 		agentSandbox = agentCfg.Sandbox
@@ -168,7 +184,6 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	a.RegisterTool(tools.NewSearchFilesTool(sandbox))
 	a.RegisterTool(tools.NewGrepFilesTool(sandbox))
 
-	// Shell tool needs AllowNetwork too
 	shellSandbox := *sandbox
 	if agentCfg != nil && agentCfg.Sandbox != nil {
 		shellSandbox.AllowNetwork = agentCfg.Sandbox.AllowNetwork
@@ -184,23 +199,26 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 		tools.WithShellSandboxConfig(&shellSandbox),
 	))
 
-	// --- workspace tools ---
 	tools.RegisterWorkspaceTools(a.ToolRegistry(), ws, sandbox)
+	return sandbox
+}
 
-	// Re-register memory tools with sandbox config for path sanitization in errors.
+func configureMemoryTools(a *agent.Agent, store *memory.Store, sandbox *cobot.SandboxConfig) {
 	if store != nil {
-		a.RegisterTool(memory.NewMemorySearchTool(store, memory.WithMemorySearchSandbox(sandbox)))
-		a.RegisterTool(memory.NewMemoryStoreTool(store, memory.WithMemoryStoreSandbox(sandbox)))
-		a.RegisterTool(memory.NewL3DeepSearchTool(store, memory.WithL3DeepSearchSandbox(sandbox)))
+		a.RegisterTool(memory.NewMemorySearchTool(store, sandbox))
+		a.RegisterTool(memory.NewMemoryStoreTool(store, sandbox))
+		a.RegisterTool(memory.NewL3DeepSearchTool(store, sandbox))
 	}
+}
 
-	// --- delegate tool ---
+func configureDelegateTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.ModelResolver, sandbox *cobot.SandboxConfig) {
 	a.RegisterTool(tools.NewDelegateTool(func() cobot.SubAgent {
 		filtered := a.ToolRegistry().Clone().Without("delegate_task", "memory_store", "memory_search", "l3_deep_search")
 		return newSubAgent(a, registry, filtered)
 	}, tools.WithDelegateWorkdir(ws.SpaceDir()), tools.WithDelegateAgentLookup(ws), tools.WithDelegateSandbox(sandbox)))
+}
 
-	// --- cron tool ---
+func configureCronTool(a *agent.Agent, ws *workspace.Workspace, store *memory.Store, registry cobot.ModelResolver) {
 	cronDir := ws.CronDir()
 	cronStore := cron.NewStore(cronDir)
 	cronExecutor := cron.NewAgentExecutor(func() cron.AgentRunner {
@@ -209,7 +227,6 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 		_ = sub.SessionMgr().SetSystemPrompt("You are a scheduled task executor. Complete the task efficiently and output results.")
 		return &cronAgentRunner{agent: sub}
 	})
-	// Wire memory store for result persistence.
 	if store != nil {
 		cronExecutor.WithMemoryStore(func(ctx context.Context, content, wingName, roomName, hallType string) (string, error) {
 			return store.StoreByName(ctx, content, wingName, roomName, hallType)
@@ -220,10 +237,7 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	if err := cronScheduler.Start(); err != nil {
 		slog.Warn("failed to start cron scheduler", "error", err)
 	}
-	// Store scheduler on the agent for cleanup.
 	a.SetCronScheduler(cronScheduler)
-
-	return nil
 }
 
 // --- private helpers (moved from cmd/cobot/helpers.go) ---

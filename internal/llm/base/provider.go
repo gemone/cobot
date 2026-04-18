@@ -78,26 +78,35 @@ func DoRequest(client *http.Client, cfg ProviderConfig, ctx context.Context, pat
 	return newLoggingReadCloser(ctx, cfg.Name, resp.Body, start), nil
 }
 
-// DefaultTransport is based on http.DefaultTransport (preserving proxy,
-// HTTP/2, and connection pool settings) with overridden timeout values.
-var DefaultTransport = func() *http.Transport {
-	base, ok := http.DefaultTransport.(*http.Transport)
+// NewTransport creates an http.Transport based on http.DefaultTransport.
+// nil timeout disables ResponseHeaderTimeout; non-nil sets it.
+func NewTransport(timeout *time.Duration) *http.Transport {
+	b, ok := http.DefaultTransport.(*http.Transport)
 	if !ok {
-		base = &http.Transport{}
+		b = &http.Transport{}
 	}
-	t := base.Clone()
+	t := b.Clone()
 	t.DialContext = (&net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
 	}).DialContext
 	t.TLSHandshakeTimeout = 10 * time.Second
-	t.ResponseHeaderTimeout = 5 * time.Minute
+	if timeout != nil {
+		t.ResponseHeaderTimeout = *timeout
+	} else {
+		t.ResponseHeaderTimeout = 0
+	}
 	return t
-}()
+}
 
-// NewHTTPClient returns a client with the shared transport.
+// NewHTTPClient returns a client with no response-header timeout.
 func NewHTTPClient() *http.Client {
-	return &http.Client{Transport: DefaultTransport}
+	return &http.Client{Transport: NewTransport(nil)}
+}
+
+// NewHTTPClientWithTimeout returns a client with the given response-header timeout.
+func NewHTTPClientWithTimeout(timeout *time.Duration) *http.Client {
+	return &http.Client{Transport: NewTransport(timeout)}
 }
 
 type loggingReadCloser struct {

@@ -57,10 +57,10 @@ func (a *Agent) runLoop(ctx context.Context, prompt, debugLabel string, executeT
 			return err
 		}
 
-		sm.turnCount++
+		sm.turnCount.Add(1)
 		a.checkAndCompress(ctx)
 
-		if sm.stmPromoteInterval > 0 && sm.turnCount%sm.stmPromoteInterval == 0 {
+		if tc := sm.turnCount.Load(); sm.stmPromoteInterval > 0 && int(tc)%sm.stmPromoteInterval == 0 {
 			a.promoteSTMBackground(ctx)
 		}
 

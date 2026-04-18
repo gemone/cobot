@@ -5,11 +5,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
 	"time"
 
 	"github.com/google/uuid"
-	"gopkg.in/yaml.v3"
 
 	"github.com/cobot-agent/cobot/internal/config"
 	cobot "github.com/cobot-agent/cobot/pkg"
@@ -88,19 +86,14 @@ func (w *Workspace) AgentsDir() string {
 	return filepath.Join(w.DataDir, "agents")
 }
 
-// SpaceDir returns the sandboxed read-write directory path.
-// This is the target for sandbox isolation — LLM file operations
-// should be rooted here in sandbox mode.
 func (w *Workspace) SpaceDir() string {
 	return filepath.Join(w.DataDir, "space")
 }
 
-// MCPDir returns the directory for MCP server configurations.
 func (w *Workspace) MCPDir() string {
 	return filepath.Join(w.DataDir, "mcp")
 }
 
-// CronDir returns the directory for cron job storage.
 func (w *Workspace) CronDir() string {
 	return filepath.Join(w.DataDir, "cron")
 }
@@ -119,8 +112,7 @@ func (w *Workspace) ExternalAgent(name string) (*cobot.ExternalAgentConfig, bool
 }
 
 // EffectiveSandbox returns the final SandboxConfig by merging workspace config
-// with optional agent-level overrides. Returns a config even if no sandbox root
-// is set — callers should check VirtualRoot != "" to determine if active.
+// with optional agent-level overrides.
 func (w *Workspace) EffectiveSandbox(agentSandbox *cobot.SandboxConfig) *cobot.SandboxConfig {
 	cfg := w.Config.Sandbox
 	if agentSandbox != nil {
@@ -150,7 +142,6 @@ func (w *Workspace) EffectiveSandbox(agentSandbox *cobot.SandboxConfig) *cobot.S
 }
 
 func (w *Workspace) EnsureDirs() error {
-	// Migrate legacy layout before creating new dirs.
 	w.MigrateLegacyLayout()
 
 	dirs := []string{
@@ -176,11 +167,9 @@ func (w *Workspace) EnsureDirs() error {
 func (w *Workspace) MigrateLegacyLayout() {
 	legacyMemDir := filepath.Join(w.DataDir, "memory")
 
-	// Migrate memory.db (LTM) from memory/ to workspace root.
 	legacyDB := filepath.Join(legacyMemDir, "memory.db")
 	newDB := filepath.Join(w.DataDir, "memory.db")
 	if _, err := os.Stat(legacyDB); err == nil {
-		// Only move if the target doesn't already exist.
 		if _, err := os.Stat(newDB); os.IsNotExist(err) {
 			if err := os.Rename(legacyDB, newDB); err != nil {
 				slog.Warn("failed to migrate legacy memory.db", "from", legacyDB, "to", newDB, "err", err)
@@ -188,10 +177,9 @@ func (w *Workspace) MigrateLegacyLayout() {
 		}
 	}
 
-	// Migrate STM session DBs from memory/ to sessions/.
 	entries, err := os.ReadDir(legacyMemDir)
 	if err != nil {
-		return // legacy dir doesn't exist, nothing to migrate
+		return
 	}
 	sessionsDir := w.SessionsDir()
 	for _, entry := range entries {
@@ -207,7 +195,6 @@ func (w *Workspace) MigrateLegacyLayout() {
 		}
 	}
 
-	// Remove legacy memory/ dir if empty.
 	remaining, _ := os.ReadDir(legacyMemDir)
 	if len(remaining) == 0 {
 		if err := os.Remove(legacyMemDir); err != nil {
@@ -303,211 +290,4 @@ func newWorkspaceFromDefinition(def *WorkspaceDefinition, dataDir string) *Works
 		Config:     cfg,
 		DataDir:    resolvedDataDir,
 	}
-}
-
-// --- Manager ---
-
-type Manager struct {
-	definitionsDir string
-	dataDir        string
-}
-
-func NewManager() (*Manager, error) {
-	m := &Manager{
-		definitionsDir: WorkspaceDefinitionsDir(),
-		dataDir:        DataDir(),
-	}
-
-	if err := os.MkdirAll(m.definitionsDir, 0755); err != nil {
-		return nil, fmt.Errorf("create definitions dir: %w", err)
-	}
-	if err := os.MkdirAll(m.dataDir, 0755); err != nil {
-		return nil, fmt.Errorf("create data dir: %w", err)
-	}
-
-	if err := m.ensureDefault(); err != nil {
-		return nil, fmt.Errorf("ensure default workspace: %w", err)
-	}
-
-	return m, nil
-}
-
-func (m *Manager) ensureDefault() error {
-	defPath := filepath.Join(m.definitionsDir, "default.yaml")
-	if _, err := os.Stat(defPath); os.IsNotExist(err) {
-		def := &WorkspaceDefinition{
-			Name: "default",
-			Type: WorkspaceTypeDefault,
-		}
-		if err := saveDefinition(def, defPath); err != nil {
-			return err
-		}
-	}
-
-	ws, err := m.Resolve("default")
-	if err != nil {
-		return err
-	}
-	if err := ws.EnsureDirs(); err != nil {
-		return err
-	}
-	if _, err := os.Stat(ws.ConfigPath()); os.IsNotExist(err) {
-		if err := ws.SaveConfig(); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (m *Manager) Resolve(name string) (*Workspace, error) {
-	defPath := filepath.Join(m.definitionsDir, name+".yaml")
-	def, err := loadDefinition(defPath)
-	if err != nil {
-		return nil, fmt.Errorf("workspace not found: %s", name)
-	}
-	ws := newWorkspaceFromDefinition(def, m.dataDir)
-	return ws, nil
-}
-
-func (m *Manager) Create(name string, wsType WorkspaceType, root string, customPath string) (*Workspace, error) {
-	if name == "" {
-		return nil, fmt.Errorf("workspace name cannot be empty")
-	}
-	if name == "default" && wsType != WorkspaceTypeDefault {
-		return nil, fmt.Errorf("name 'default' is reserved")
-	}
-
-	defPath := filepath.Join(m.definitionsDir, name+".yaml")
-	if _, err := os.Stat(defPath); err == nil {
-		return nil, fmt.Errorf("workspace '%s' already exists", name)
-	}
-
-	def := &WorkspaceDefinition{
-		Name: name,
-		Type: wsType,
-		Path: customPath,
-		Root: root,
-	}
-
-	if err := saveDefinition(def, defPath); err != nil {
-		return nil, err
-	}
-
-	ws := newWorkspaceFromDefinition(def, m.dataDir)
-	ws.Config = newWorkspaceConfig(name, wsType, root)
-
-	if err := ws.EnsureDirs(); err != nil {
-		return nil, err
-	}
-	if err := ws.SaveConfig(); err != nil {
-		return nil, err
-	}
-
-	return ws, nil
-}
-
-func (m *Manager) List() ([]*WorkspaceDefinition, error) {
-	var defs []*WorkspaceDefinition
-
-	entries, err := os.ReadDir(m.definitionsDir)
-	if err != nil {
-		return nil, fmt.Errorf("read definitions dir: %w", err)
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".yaml" {
-			continue
-		}
-		defPath := filepath.Join(m.definitionsDir, entry.Name())
-		def, err := loadDefinition(defPath)
-		if err != nil {
-			slog.Debug("skipping invalid definition", "file", entry.Name(), "error", err)
-			continue
-		}
-		defs = append(defs, def)
-	}
-
-	sort.Slice(defs, func(i, j int) bool {
-		if defs[i].Type == WorkspaceTypeDefault {
-			return true
-		}
-		if defs[j].Type == WorkspaceTypeDefault {
-			return false
-		}
-		return defs[i].Name < defs[j].Name
-	})
-
-	return defs, nil
-}
-
-func (m *Manager) Delete(name string) error {
-	if name == "default" {
-		return fmt.Errorf("cannot delete default workspace")
-	}
-
-	defPath := filepath.Join(m.definitionsDir, name+".yaml")
-	def, err := loadDefinition(defPath)
-	if err != nil {
-		return fmt.Errorf("workspace not found: %s", name)
-	}
-
-	if err := os.Remove(defPath); err != nil {
-		return fmt.Errorf("remove definition: %w", err)
-	}
-
-	dataPath := def.ResolvePath(m.dataDir)
-	if err := os.RemoveAll(dataPath); err != nil {
-		return fmt.Errorf("remove workspace data: %w", err)
-	}
-
-	return nil
-}
-
-func (m *Manager) Discover(startDir string) (*Workspace, error) {
-	dir := startDir
-	for {
-		cobotDir := filepath.Join(dir, ".cobot")
-		info, err := os.Stat(cobotDir)
-		if err == nil && info.IsDir() {
-			projectName := filepath.Base(dir)
-
-			workspaceYAMLPath := filepath.Join(dir, ".cobot", "workspace.yaml")
-			if data, err := os.ReadFile(workspaceYAMLPath); err == nil {
-				var cfg struct {
-					Name string `yaml:"name"`
-				}
-				if err := yaml.Unmarshal(data, &cfg); err == nil && cfg.Name != "" {
-					projectName = cfg.Name
-				}
-			}
-
-			defPath := filepath.Join(m.definitionsDir, projectName+".yaml")
-			if def, err := loadDefinition(defPath); err == nil {
-				return newWorkspaceFromDefinition(def, m.dataDir), nil
-			}
-
-			return m.Create(projectName, WorkspaceTypeProject, dir, "")
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return nil, fmt.Errorf("no .cobot directory found from %s", startDir)
-		}
-		dir = parent
-	}
-}
-
-func (m *Manager) ResolveByNameOrDiscover(name string, startDir string) (*Workspace, error) {
-	if name != "" {
-		ws, err := m.Resolve(name)
-		if err == nil {
-			return ws, nil
-		}
-	}
-
-	ws, err := m.Discover(startDir)
-	if err == nil {
-		return ws, nil
-	}
-
-	return m.Resolve("default")
 }

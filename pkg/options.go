@@ -1,5 +1,7 @@
 package cobot
 
+import "time"
+
 type Config struct {
 	ConfigPath   string                    `yaml:"config_path,omitempty"`
 	DataPath     string                    `yaml:"data_path,omitempty"`
@@ -47,6 +49,10 @@ type SessionConfig struct {
 type ProviderConfig struct {
 	BaseURL string            `yaml:"base_url"`
 	Headers map[string]string `yaml:"headers"`
+	// Timeout sets the HTTP response-header timeout for this provider.
+	// nil (default) means no timeout — requests wait indefinitely.
+	// A non-nil value sets the timeout duration.
+	Timeout *time.Duration `yaml:"timeout,omitempty"`
 }
 
 func DefaultConfig() *Config {
@@ -67,13 +73,4 @@ func DefaultSessionConfig() SessionConfig {
 		CompressThreshold:  0.7,
 		SummarizeTurns:     60,
 	}
-}
-
-type ExternalAgentConfig struct {
-	Name        string   `yaml:"name"`
-	Description string   `yaml:"description,omitempty"`
-	Command     string   `yaml:"command"`
-	Args        []string `yaml:"args,omitempty"`
-	Workdir     string   `yaml:"workdir,omitempty"`
-	Timeout     string   `yaml:"timeout,omitempty"`
 }

@@ -1,18 +1,13 @@
 package tools
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
+
+	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
-// decodeArgs unmarshals JSON tool arguments into v.
-func decodeArgs(args json.RawMessage, v any) error {
-	if err := json.Unmarshal(args, v); err != nil {
-		return fmt.Errorf("parse arguments: %w", err)
-	}
-	return nil
-}
+var decodeArgs = cobot.DecodeToolArgs
 
 // validateName ensures a name does not contain path separators or parent references.
 func validateName(name string) error {

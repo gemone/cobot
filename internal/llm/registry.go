@@ -11,7 +11,7 @@ import (
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
-type ProviderFactory func(apiKey, baseURL string) cobot.Provider
+type ProviderFactory func(apiKey, baseURL string, pc *cobot.ProviderConfig) cobot.Provider
 
 type Registry struct {
 	mu        sync.RWMutex
@@ -26,11 +26,11 @@ func NewRegistry(cfg *cobot.Config) *Registry {
 		factories: make(map[string]ProviderFactory),
 		config:    cfg,
 	}
-	r.factories[anthropic.ProviderName] = func(apiKey, baseURL string) cobot.Provider {
-		return anthropic.NewProvider(apiKey, baseURL)
+	r.factories[anthropic.ProviderName] = func(apiKey, baseURL string, pc *cobot.ProviderConfig) cobot.Provider {
+		return anthropic.NewProvider(apiKey, baseURL, pc)
 	}
-	r.factories[openai.ProviderName] = func(apiKey, baseURL string) cobot.Provider {
-		return openai.NewProvider(apiKey, baseURL)
+	r.factories[openai.ProviderName] = func(apiKey, baseURL string, pc *cobot.ProviderConfig) cobot.Provider {
+		return openai.NewProvider(apiKey, baseURL, pc)
 	}
 	return r
 }
@@ -114,10 +114,12 @@ func (r *Registry) createProvider(name string) (cobot.Provider, error) {
 		return nil, fmt.Errorf("%s API key not configured", name)
 	}
 
+	var pc *cobot.ProviderConfig
 	baseURL := ""
 	if r.config.Providers != nil {
-		if pc, ok := r.config.Providers[name]; ok {
-			baseURL = pc.BaseURL
+		if cfg, ok := r.config.Providers[name]; ok {
+			pc = &cfg
+			baseURL = cfg.BaseURL
 		}
 	}
 
@@ -125,7 +127,7 @@ func (r *Registry) createProvider(name string) (cobot.Provider, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown provider: %s", name)
 	}
-	return factory(apiKey, baseURL), nil
+	return factory(apiKey, baseURL, pc), nil
 }
 
 func parseModelSpec(model string) (providerName, modelName string) {

@@ -71,7 +71,8 @@ type Agent struct {
 
 	streamMu   sync.Mutex // serializes concurrent Stream calls
 	streamWg   sync.WaitGroup
-	compressMu sync.Mutex // prevents concurrent compression runs
+	bgWg       sync.WaitGroup // tracks background goroutines (STM promotion, extraction)
+	compressMu sync.Mutex     // prevents concurrent compression runs
 
 	agentCtx      context.Context
 	agentCancel   context.CancelFunc
@@ -201,6 +202,7 @@ func (a *Agent) Close() error {
 	done := make(chan struct{})
 	go func() {
 		a.streamWg.Wait()
+		a.bgWg.Wait()
 		close(done)
 	}()
 
@@ -219,13 +221,11 @@ func (a *Agent) Close() error {
 	sm := a.sessionMgr
 	if sm.memoryStore != nil {
 		if stm, ok := sm.memoryStore.(cobot.ShortTermMemory); ok {
-			go func() {
-				_ = stm.PromoteToLongTerm(context.Background(), sm.sessionID)
-				_ = stm.ClearShortTerm(context.Background(), sm.sessionID)
-			}()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = stm.PromoteToLongTerm(ctx, sm.sessionID)
+			_ = stm.ClearShortTerm(ctx, sm.sessionID)
+			cancel()
 		}
-		// Give background promotion a moment to finish.
-		time.Sleep(100 * time.Millisecond)
 		if err := sm.memoryStore.Close(); err != nil {
 			return fmt.Errorf("close memory store: %w", err)
 		}

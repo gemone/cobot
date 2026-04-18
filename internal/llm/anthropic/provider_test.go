@@ -7,21 +7,21 @@ import (
 )
 
 func TestNewProvider(t *testing.T) {
-	p := NewProvider("sk-test", "")
+	p := NewProvider("sk-test", "", nil)
 	if p.Name() != ProviderName {
 		t.Errorf("expected %s, got %s", ProviderName, p.Name())
 	}
 }
 
 func TestNewProviderCustomBaseURL(t *testing.T) {
-	p := NewProvider("key", "https://custom.api.com/")
+	p := NewProvider("key", "https://custom.api.com/", nil)
 	if p.cfg.BaseURL != "https://custom.api.com" {
 		t.Errorf("expected trimmed URL, got %s", p.cfg.BaseURL)
 	}
 }
 
 func TestBuildRequest(t *testing.T) {
-	p := NewProvider("key", "")
+	p := NewProvider("key", "", nil)
 	req := &cobot.ProviderRequest{
 		Model: "claude-3-sonnet",
 		Messages: []cobot.Message{
@@ -48,7 +48,7 @@ func TestBuildRequest(t *testing.T) {
 }
 
 func TestBuildRequestModelPrefix(t *testing.T) {
-	p := NewProvider("key", "")
+	p := NewProvider("key", "", nil)
 	req := &cobot.ProviderRequest{Model: "anthropic:claude-3-opus"}
 	body := p.buildRequest(req, false)
 	if body.Model != "claude-3-opus" {

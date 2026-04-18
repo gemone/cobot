@@ -3,10 +3,13 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
 	"slices"
+	"time"
 
 	"github.com/cobot-agent/cobot/internal/llm/base"
 	cobot "github.com/cobot-agent/cobot/pkg"
@@ -22,14 +25,18 @@ type Provider struct {
 	client *http.Client
 }
 
-func NewProvider(apiKey, baseURL string) *Provider {
+func NewProvider(apiKey, baseURL string, pc *cobot.ProviderConfig) *Provider {
+	var timeout *time.Duration
+	if pc != nil {
+		timeout = pc.Timeout
+	}
 	return &Provider{
 		cfg: base.ProviderConfig{
 			Name:    ProviderName,
 			APIKey:  apiKey,
 			BaseURL: base.PrepareBaseURL(baseURL, "https://api.openai.com/v1"),
 		},
-		client: base.NewHTTPClient(),
+		client: base.NewHTTPClientWithTimeout(timeout),
 	}
 }
 
@@ -117,7 +124,7 @@ func (p *Provider) readStream(sse *base.SSEScanner, ch chan<- cobot.ProviderChun
 	for {
 		_, data, err := sse.Next()
 		if err != nil {
-			if err.Error() != "EOF" {
+			if !errors.Is(err, io.EOF) {
 				ch <- cobot.ProviderChunk{
 					Content: fmt.Sprintf("[stream error: %v]", err),
 					Done:    true,

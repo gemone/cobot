@@ -46,15 +46,6 @@ type SSEScanner struct {
 	provider    string
 }
 
-// NewSSEScanner creates a new SSEScanner reading from the given reader.
-// Deprecated: use NewSSEScannerWithContext for context-aware streaming.
-func NewSSEScanner(reader io.Reader) *SSEScanner {
-	s := &SSEScanner{}
-	s.scanner = bufio.NewScanner(reader)
-	s.scanner.Buffer(make([]byte, 4096), MaxScannerBuffer)
-	return s
-}
-
 // NewSSEScannerWithContext creates a context-aware SSEScanner.
 //
 // The scanner starts a background watchdog that closes the body when:

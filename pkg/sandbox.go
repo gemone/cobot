@@ -141,6 +141,13 @@ func (s *SandboxConfig) RewriteOutputPaths(text string) string {
 	return result
 }
 
+func (s *SandboxConfig) RewriteError(err error) error {
+	if s == nil || s.VirtualRoot == "" || err == nil {
+		return err
+	}
+	return fmt.Errorf("%s: %w", s.RewriteOutputPaths(err.Error()), err)
+}
+
 func (s *SandboxConfig) RealToVirtual(realPath string) string {
 	if s == nil || s.VirtualRoot == "" || s.Root == "" {
 		return realPath

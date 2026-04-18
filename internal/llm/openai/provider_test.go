@@ -8,28 +8,28 @@ import (
 )
 
 func TestNewProviderDefaultBaseURL(t *testing.T) {
-	p := NewProvider("key", "")
+	p := NewProvider("key", "", nil)
 	if p.cfg.BaseURL != "https://api.openai.com/v1" {
 		t.Errorf("expected default base URL, got %s", p.cfg.BaseURL)
 	}
 }
 
 func TestNewProviderCustomBaseURL(t *testing.T) {
-	p := NewProvider("key", "https://custom.api.com/v1")
+	p := NewProvider("key", "https://custom.api.com/v1", nil)
 	if p.cfg.BaseURL != "https://custom.api.com/v1" {
 		t.Errorf("expected custom base URL, got %s", p.cfg.BaseURL)
 	}
 }
 
 func TestNewProviderTrailingSlash(t *testing.T) {
-	p := NewProvider("key", "https://custom.api.com/v1/")
+	p := NewProvider("key", "https://custom.api.com/v1/", nil)
 	if p.cfg.BaseURL != "https://custom.api.com/v1" {
 		t.Errorf("expected trimmed base URL, got %s", p.cfg.BaseURL)
 	}
 }
 
 func TestProviderName(t *testing.T) {
-	p := NewProvider("key", "")
+	p := NewProvider("key", "", nil)
 	if p.Name() != ProviderName {
 		t.Errorf("expected name %s, got %s", ProviderName, p.Name())
 	}
