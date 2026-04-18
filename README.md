@@ -394,3 +394,11 @@ MIT License — see [LICENSE](LICENSE) for details.
 ## Acknowledgments
 
 - [modernc.org/sqlite](https://gitlab.com/cznic/sqlite) — pure-Go SQLite driver for MemPalace (WAL mode + FTS5)
+
+## References
+
+- [OpenCode Documentation](https://opencode.ai/docs/zh-cn/) — architecture and agent workflow reference
+- [Hermes Documentation](https://hermes-agent.nousresearch.com/docs/) — agent runtime and orchestration reference
+- [MemPalace](https://github.com/mempalace/mempalace) — memory architecture reference
+- [NanoBot](https://github.com/HKUDS/nanobot) — agent system reference
+- [OpenClaw](https://openclaw.ai/) — agent platform reference
