@@ -1,7 +1,7 @@
 # Cobot
 
 [![Go Version](https://img.shields.io/badge/go-1.26.2-blue.svg)](https://golang.org/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-BSD%203--Clause-green.svg)](LICENSE)
 
 Cobot is a multi-workspace AI agent framework with isolated per-workspace memory, persona, and skill sets. Each workspace maintains its own agents, sandbox configuration, and evolving state — enabling project-specific AI workflows that are fully isolated from one another.
 
@@ -389,7 +389,7 @@ go test ./internal/memory/...
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) for details.
+BSD 3-Clause License — see [LICENSE](LICENSE) for details.
 
 ## Acknowledgments
 
