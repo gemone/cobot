@@ -3,29 +3,32 @@ package tools
 import (
 	"fmt"
 
-	cobot "github.com/cobot-agent/cobot/pkg"
+	"github.com/cobot-agent/cobot/internal/sandbox"
 )
 
 // sandboxResolvePath resolves and validates a path within the sandbox.
 // If sandbox is nil, the path is returned unchanged.
-func sandboxResolvePath(sandbox *cobot.SandboxConfig, path string) (string, error) {
-	if sandbox == nil {
+func sandboxResolvePath(cfg *sandbox.SandboxConfig, path string, write bool) (string, error) {
+	if cfg == nil {
 		return path, nil
 	}
 	originalPath := path
-	resolved, err := sandbox.AutoResolvePath(path)
+	resolved, err := cfg.AutoResolvePath(path)
 	if err != nil {
 		return "", err
 	}
-	if err := sandbox.ValidatePath(resolved); err != nil {
+	if err := cfg.ValidatePath(resolved); err != nil {
 		return "", fmt.Errorf("path %q is outside allowed workspace paths", originalPath)
+	}
+	if write && !cfg.IsAllowed(resolved, true) {
+		return "", fmt.Errorf("path %q is readonly or blocked by sandbox policy", originalPath)
 	}
 	return resolved, nil
 }
 
 // sandboxTool provides common sandbox functionality for tools.
 type sandboxTool struct {
-	sandbox *cobot.SandboxConfig
+	sandbox *sandbox.SandboxConfig
 }
 
 // describeWithSandbox appends the sandbox notice to a tool description.
@@ -36,4 +39,4 @@ func (s *sandboxTool) describeWithSandbox(desc string) string {
 	return desc
 }
 
-var sandboxRewriteErr = (*cobot.SandboxConfig).RewriteError
+var sandboxRewriteErr = (*sandbox.SandboxConfig).RewriteError

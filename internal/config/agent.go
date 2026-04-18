@@ -6,18 +6,19 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cobot-agent/cobot/internal/sandbox"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
 type AgentConfig struct {
-	Name          string               `yaml:"name"`
-	Model         string               `yaml:"model"`
-	SystemPrompt  string               `yaml:"system_prompt"`
-	EnabledMCP    []string             `yaml:"enabled_mcp,omitempty"`
-	EnabledSkills []string             `yaml:"enabled_skills,omitempty"`
-	MaxTurns      int                  `yaml:"max_turns,omitempty"`
-	Sandbox       *cobot.SandboxConfig `yaml:"sandbox,omitempty"`
-	Session       *cobot.SessionConfig `yaml:"session,omitempty"`
+	Name          string                 `yaml:"name"`
+	Model         string                 `yaml:"model"`
+	SystemPrompt  string                 `yaml:"system_prompt"`
+	EnabledMCP    []string               `yaml:"enabled_mcp,omitempty"`
+	EnabledSkills []string               `yaml:"enabled_skills,omitempty"`
+	MaxTurns      int                    `yaml:"max_turns,omitempty"`
+	Sandbox       *sandbox.SandboxConfig `yaml:"sandbox,omitempty"`
+	Session       *cobot.SessionConfig   `yaml:"session,omitempty"`
 }
 
 func LoadAgentConfig(path string) (*AgentConfig, error) {

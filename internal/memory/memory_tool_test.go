@@ -4,8 +4,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-
-	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
 func TestMemorySearchTool(t *testing.T) {
@@ -17,9 +15,9 @@ func TestMemorySearchTool(t *testing.T) {
 	defer s.Close()
 
 	ctx := context.Background()
-	wing := &cobot.Wing{Name: "proj", Type: "project"}
+	wing := &Wing{Name: "proj", Type: "project"}
 	s.CreateWing(ctx, wing)
-	room := &cobot.Room{WingID: wing.ID, Name: "decisions", HallType: "facts"}
+	room := &Room{WingID: wing.ID, Name: "decisions", HallType: "facts"}
 	s.CreateRoom(ctx, room)
 
 	id, err := s.Store(ctx, "decided to use SQLite for storage", wing.ID, room.ID)
@@ -153,14 +151,14 @@ func TestMemorySearchToolWithWingFilter(t *testing.T) {
 	defer s.Close()
 
 	ctx := context.Background()
-	wing1 := &cobot.Wing{Name: "alpha", Type: "project"}
+	wing1 := &Wing{Name: "alpha", Type: "project"}
 	s.CreateWing(ctx, wing1)
-	wing2 := &cobot.Wing{Name: "beta", Type: "project"}
+	wing2 := &Wing{Name: "beta", Type: "project"}
 	s.CreateWing(ctx, wing2)
 
-	room1 := &cobot.Room{WingID: wing1.ID, Name: "notes", HallType: "facts"}
+	room1 := &Room{WingID: wing1.ID, Name: "notes", HallType: "facts"}
 	s.CreateRoom(ctx, room1)
-	room2 := &cobot.Room{WingID: wing2.ID, Name: "notes", HallType: "facts"}
+	room2 := &Room{WingID: wing2.ID, Name: "notes", HallType: "facts"}
 	s.CreateRoom(ctx, room2)
 
 	s.Store(ctx, "alpha content about SQLite", wing1.ID, room1.ID)

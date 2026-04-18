@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/cobot-agent/cobot/internal/sandbox"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -28,7 +29,7 @@ type SearchFilesTool struct {
 	BasicTool
 }
 
-func NewSearchFilesTool(sandbox *cobot.SandboxConfig) *SearchFilesTool {
+func NewSearchFilesTool(sandbox *sandbox.SandboxConfig) *SearchFilesTool {
 	return &SearchFilesTool{BasicTool{
 		sandboxTool: sandboxTool{sandbox: sandbox},
 		name:        "filesystem_search",
@@ -42,7 +43,7 @@ func (t *SearchFilesTool) Execute(ctx context.Context, args json.RawMessage) (st
 	if err := decodeArgs(args, &a); err != nil {
 		return "", err
 	}
-	if resolved, err := sandboxResolvePath(t.sandbox, a.Path); err != nil {
+	if resolved, err := sandboxResolvePath(t.sandbox, a.Path, false); err != nil {
 		return "", err
 	} else {
 		a.Path = resolved
@@ -162,7 +163,7 @@ type GrepFilesTool struct {
 	BasicTool
 }
 
-func NewGrepFilesTool(sandbox *cobot.SandboxConfig) *GrepFilesTool {
+func NewGrepFilesTool(sandbox *sandbox.SandboxConfig) *GrepFilesTool {
 	return &GrepFilesTool{BasicTool{
 		sandboxTool: sandboxTool{sandbox: sandbox},
 		name:        "filesystem_grep",
@@ -176,7 +177,7 @@ func (t *GrepFilesTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if err := decodeArgs(args, &a); err != nil {
 		return "", err
 	}
-	if resolved, err := sandboxResolvePath(t.sandbox, a.Path); err != nil {
+	if resolved, err := sandboxResolvePath(t.sandbox, a.Path, false); err != nil {
 		return "", err
 	} else {
 		a.Path = resolved

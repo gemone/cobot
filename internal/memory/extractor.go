@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/cobot-agent/cobot/internal/textutil"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -29,12 +30,12 @@ func (e *Extractor) Extract(ctx context.Context, summary string, originalMsgs []
 			buf.WriteString(fmt.Sprintf("\n... (%d more messages omitted)\n", len(originalMsgs)-40))
 			break
 		}
-		buf.WriteString(fmt.Sprintf("[%s]: %s\n", m.Role, cobot.Truncate(m.Content, 300)))
+		buf.WriteString(fmt.Sprintf("[%s]: %s\n", m.Role, textutil.Truncate(m.Content, 300)))
 		for _, tc := range m.ToolCalls {
 			buf.WriteString(fmt.Sprintf("  tool_call: %s\n", tc.Name))
 		}
 		if m.ToolResult != nil && m.ToolResult.Output != "" {
-			buf.WriteString(fmt.Sprintf("  tool_result: %s\n", cobot.Truncate(m.ToolResult.Output, 200)))
+			buf.WriteString(fmt.Sprintf("  tool_result: %s\n", textutil.Truncate(m.ToolResult.Output, 200)))
 		}
 	}
 

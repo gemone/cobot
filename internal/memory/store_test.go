@@ -30,7 +30,7 @@ func TestWingCRUD(t *testing.T) {
 	defer s.Close()
 
 	ctx := context.Background()
-	wing := &cobot.Wing{Name: "test-project", Type: "project", Keywords: []string{"go", "agent"}}
+	wing := &Wing{Name: "test-project", Type: "project", Keywords: []string{"go", "agent"}}
 	if err := s.CreateWing(ctx, wing); err != nil {
 		t.Fatal(err)
 	}
@@ -61,10 +61,10 @@ func TestRoomCRUD(t *testing.T) {
 	defer s.Close()
 
 	ctx := context.Background()
-	wing := &cobot.Wing{Name: "proj", Type: "project"}
+	wing := &Wing{Name: "proj", Type: "project"}
 	s.CreateWing(ctx, wing)
 
-	room := &cobot.Room{WingID: wing.ID, Name: "auth-migration", HallType: "facts"}
+	room := &Room{WingID: wing.ID, Name: "auth-migration", HallType: "facts"}
 	if err := s.CreateRoom(ctx, room); err != nil {
 		t.Fatal(err)
 	}
@@ -90,9 +90,9 @@ func TestDrawerCRUD(t *testing.T) {
 	defer s.Close()
 
 	ctx := context.Background()
-	wing := &cobot.Wing{Name: "proj", Type: "project"}
+	wing := &Wing{Name: "proj", Type: "project"}
 	s.CreateWing(ctx, wing)
-	room := &cobot.Room{WingID: wing.ID, Name: "decisions", HallType: "facts"}
+	room := &Room{WingID: wing.ID, Name: "decisions", HallType: "facts"}
 	s.CreateRoom(ctx, room)
 
 	id, err := s.AddDrawer(ctx, wing.ID, room.ID, "decided to use SQLite for storage")
@@ -110,14 +110,14 @@ func TestClosetCRUD(t *testing.T) {
 	defer s.Close()
 
 	ctx := context.Background()
-	wing := &cobot.Wing{Name: "proj", Type: "project"}
+	wing := &Wing{Name: "proj", Type: "project"}
 	s.CreateWing(ctx, wing)
-	room := &cobot.Room{WingID: wing.ID, Name: "summary", HallType: "facts"}
+	room := &Room{WingID: wing.ID, Name: "summary", HallType: "facts"}
 	s.CreateRoom(ctx, room)
 
 	drawerID, _ := s.AddDrawer(ctx, wing.ID, room.ID, "content here")
 
-	closet := &cobot.Closet{
+	closet := &Closet{
 		RoomID:    room.ID,
 		DrawerIDs: []string{drawerID},
 		Summary:   "brief summary",
@@ -144,9 +144,9 @@ func TestFTS5Search(t *testing.T) {
 	defer s.Close()
 
 	ctx := context.Background()
-	wing := &cobot.Wing{Name: "proj", Type: "project"}
+	wing := &Wing{Name: "proj", Type: "project"}
 	s.CreateWing(ctx, wing)
-	room := &cobot.Room{WingID: wing.ID, Name: "decisions", HallType: "facts"}
+	room := &Room{WingID: wing.ID, Name: "decisions", HallType: "facts"}
 	s.CreateRoom(ctx, room)
 
 	// Store via Store() which sets tag = room.HallType and triggers FTS index.
@@ -170,9 +170,9 @@ func TestStoreAndSearch(t *testing.T) {
 	defer s.Close()
 
 	ctx := context.Background()
-	wing := &cobot.Wing{Name: "proj", Type: "project"}
+	wing := &Wing{Name: "proj", Type: "project"}
 	s.CreateWing(ctx, wing)
-	room := &cobot.Room{WingID: wing.ID, Name: "decisions", HallType: "facts"}
+	room := &Room{WingID: wing.ID, Name: "decisions", HallType: "facts"}
 	s.CreateRoom(ctx, room)
 
 	_, err := s.Store(ctx, "decided to use SQLite for storage", wing.ID, room.ID)
@@ -205,9 +205,9 @@ func TestStoreAndSearchMultiple(t *testing.T) {
 	defer s.Close()
 
 	ctx := context.Background()
-	wing := &cobot.Wing{Name: "proj", Type: "project"}
+	wing := &Wing{Name: "proj", Type: "project"}
 	s.CreateWing(ctx, wing)
-	room := &cobot.Room{WingID: wing.ID, Name: "notes", HallType: "facts"}
+	room := &Room{WingID: wing.ID, Name: "notes", HallType: "facts"}
 	s.CreateRoom(ctx, room)
 
 	s.Store(ctx, "decided to use SQLite for storage", wing.ID, room.ID)
@@ -241,9 +241,9 @@ func TestL3DeepSearch(t *testing.T) {
 
 	ctx := context.Background()
 
-	wing := &cobot.Wing{Name: "test"}
+	wing := &Wing{Name: "test"}
 	s.CreateWing(ctx, wing)
-	room := &cobot.Room{WingID: wing.ID, Name: "notes", HallType: "log"}
+	room := &Room{WingID: wing.ID, Name: "notes", HallType: "log"}
 	s.CreateRoom(ctx, room)
 
 	_, err = s.Store(ctx, "Important decision about architecture", wing.ID, room.ID)
@@ -320,9 +320,9 @@ func TestAutoSummarizeRoom(t *testing.T) {
 
 	ctx := context.Background()
 
-	wing := &cobot.Wing{Name: "test"}
+	wing := &Wing{Name: "test"}
 	s.CreateWing(ctx, wing)
-	room := &cobot.Room{WingID: wing.ID, Name: "notes", HallType: "log"}
+	room := &Room{WingID: wing.ID, Name: "notes", HallType: "log"}
 	s.CreateRoom(ctx, room)
 
 	_, err = s.Store(ctx, "First important note about the project", wing.ID, room.ID)

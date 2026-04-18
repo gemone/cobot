@@ -8,6 +8,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/cobot-agent/cobot/internal/textutil"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -155,7 +156,7 @@ func (s *Store) L3DeepSearch(ctx context.Context, query string, limit int) ([]*c
 }
 
 // collectDeepSearch performs context-aware deep search for WakeUp.
-func (s *Store) collectDeepSearch(ctx context.Context, wings []*cobot.Wing, contextHint string) []string {
+func (s *Store) collectDeepSearch(ctx context.Context, wings []*Wing, contextHint string) []string {
 	var results []string
 
 	queries := generateDeepQueries(contextHint)
@@ -170,7 +171,7 @@ func (s *Store) collectDeepSearch(ctx context.Context, wings []*cobot.Wing, cont
 		b.WriteString("### Related: ")
 		b.WriteString(query)
 		for _, r := range searchResults {
-			content := cobot.Truncate(r.Content, 150)
+			content := textutil.Truncate(r.Content, 150)
 			b.WriteString("\n- [")
 			b.WriteString(r.Tier1)
 			b.WriteString("] ")
@@ -209,11 +210,11 @@ func (s *Store) SummarizeContent(content string) string {
 			continue
 		}
 		if len(line) > 10 {
-			return cobot.Truncate(line, 200)
+			return textutil.Truncate(line, 200)
 		}
 	}
 
-	return cobot.Truncate(content, 200)
+	return textutil.Truncate(content, 200)
 }
 
 // AutoSummarizeRoom generates summaries for all closets in a room.
@@ -243,9 +244,9 @@ func (s *Store) AutoSummarizeRoom(ctx context.Context, wingID, roomID string) er
 		return nil
 	}
 
-	combinedSummary := cobot.Truncate(strings.Join(summaries, "; "), 500)
+	combinedSummary := textutil.Truncate(strings.Join(summaries, "; "), 500)
 
-	closet := &cobot.Closet{
+	closet := &Closet{
 		RoomID:  roomID,
 		Summary: combinedSummary,
 	}

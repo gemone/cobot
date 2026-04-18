@@ -85,7 +85,7 @@ func (s *Store) closeSTMDB(sessionID string) error {
 // getSTMWingID returns the wing ID for the session wing in the given STM DB.
 // Returns ("", nil) if the wing doesn't exist.
 func getSTMWingID(ctx context.Context, db *sql.DB) (string, error) {
-	var w cobot.Wing
+	var w Wing
 	var kwJSON string
 	row := db.QueryRowContext(ctx, sqlSelectWingByName, stmWingName)
 	if err := row.Scan(&w.ID, &w.Name, &w.Type, &kwJSON); err == sql.ErrNoRows {
@@ -97,15 +97,15 @@ func getSTMWingID(ctx context.Context, db *sql.DB) (string, error) {
 }
 
 // getSTMRooms returns all rooms for the given wing in the STM DB.
-func getSTMRooms(ctx context.Context, db *sql.DB, wingID string) ([]*cobot.Room, error) {
+func getSTMRooms(ctx context.Context, db *sql.DB, wingID string) ([]*Room, error) {
 	rows, err := db.QueryContext(ctx, sqlSelectRooms, wingID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var rooms []*cobot.Room
+	var rooms []*Room
 	for rows.Next() {
-		var r cobot.Room
+		var r Room
 		if err := rows.Scan(&r.ID, &r.WingID, &r.Name, &r.HallType); err != nil {
 			return nil, err
 		}
@@ -133,7 +133,7 @@ func (s *Store) StoreShortTerm(ctx context.Context, sessionID, content, category
 
 // RecallShortTerm retrieves all short-term memories for the given session
 // from all rooms, ordered by creation time (oldest first).
-func (s *Store) RecallShortTerm(ctx context.Context, sessionID string) ([]*cobot.Drawer, error) {
+func (s *Store) RecallShortTerm(ctx context.Context, sessionID string) ([]*Drawer, error) {
 	stmDB, err := s.getSTMDB(sessionID)
 	if err != nil {
 		return nil, err
@@ -149,14 +149,14 @@ func (s *Store) RecallShortTerm(ctx context.Context, sessionID string) ([]*cobot
 		return nil, err
 	}
 
-	var all []*cobot.Drawer
+	var all []*Drawer
 	for _, room := range rooms {
 		dRows, err := stmDB.QueryContext(ctx, sqlSelectDrawersByRoomOrdered, room.ID)
 		if err != nil {
 			return nil, err
 		}
 		for dRows.Next() {
-			var d cobot.Drawer
+			var d Drawer
 			if err := dRows.Scan(&d.ID, &d.RoomID, &d.Content, &d.CreatedAt); err != nil {
 				dRows.Close()
 				return nil, err
@@ -231,7 +231,7 @@ func (s *Store) StoreShortTermCompressed(ctx context.Context, sessionID, content
 
 	// Find or create the compressed room.
 	var roomID string
-	var r cobot.Room
+	var r Room
 	rRow := stmDB.QueryRowContext(ctx, sqlSelectRoomByName, wingID, stmRoomCompressed)
 	if err := rRow.Scan(&r.ID, &r.WingID, &r.Name, &r.HallType); err == sql.ErrNoRows {
 		// Room doesn't exist yet; storeByNameOnDB will create it.
@@ -287,7 +287,7 @@ func (s *Store) SummarizeAndPromoteSTM(ctx context.Context, sessionID string) er
 		stmRoomObservation: true,
 	}
 
-	var allDrawers []*cobot.Drawer
+	var allDrawers []*Drawer
 	var roomIDsToClear []string
 
 	for _, room := range rooms {
@@ -299,7 +299,7 @@ func (s *Store) SummarizeAndPromoteSTM(ctx context.Context, sessionID string) er
 			continue
 		}
 		for dRows.Next() {
-			var d cobot.Drawer
+			var d Drawer
 			if err := dRows.Scan(&d.ID, &d.RoomID, &d.Content, &d.CreatedAt); err != nil {
 				dRows.Close()
 				continue

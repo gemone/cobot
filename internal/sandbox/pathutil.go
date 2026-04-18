@@ -1,4 +1,4 @@
-package cobot
+package sandbox
 
 import (
 	"path/filepath"

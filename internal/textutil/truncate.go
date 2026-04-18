@@ -1,4 +1,4 @@
-package cobot
+package textutil
 
 import "unicode/utf8"
 
@@ -8,7 +8,6 @@ func Truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
 	}
-	// Find last valid rune boundary at or before maxLen to avoid breaking multi-byte UTF-8.
 	for i := maxLen; i >= 0; i-- {
 		if utf8.RuneStart(s[i]) {
 			return s[:i] + "..."

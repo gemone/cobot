@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cobot-agent/cobot/internal/sandbox"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -26,7 +27,7 @@ const defaultShellTimeout = 2 * time.Minute
 
 type ShellExecTool struct {
 	workdir string
-	config  *cobot.SandboxConfig
+	config  *sandbox.SandboxConfig
 	timeout time.Duration
 }
 
@@ -36,7 +37,7 @@ func WithShellWorkdir(workdir string) ShellExecToolOption {
 	return func(t *ShellExecTool) { t.workdir = workdir }
 }
 
-func WithShellSandboxConfig(config *cobot.SandboxConfig) ShellExecToolOption {
+func WithShellSandboxConfig(config *sandbox.SandboxConfig) ShellExecToolOption {
 	return func(t *ShellExecTool) { t.config = config }
 }
 
@@ -45,7 +46,7 @@ func WithShellSandboxConfig(config *cobot.SandboxConfig) ShellExecToolOption {
 func WithShellBlockedCommands(blocked []string) ShellExecToolOption {
 	return func(t *ShellExecTool) {
 		if t.config == nil {
-			t.config = &cobot.SandboxConfig{}
+			t.config = &sandbox.SandboxConfig{}
 		}
 		t.config.BlockedCommands = blocked
 	}
@@ -54,7 +55,7 @@ func WithShellBlockedCommands(blocked []string) ShellExecToolOption {
 func WithShellAllowNetwork(allow bool) ShellExecToolOption {
 	return func(t *ShellExecTool) {
 		if t.config == nil {
-			t.config = &cobot.SandboxConfig{}
+			t.config = &sandbox.SandboxConfig{}
 		}
 		t.config.AllowNetwork = allow
 	}
@@ -107,7 +108,7 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if t.config != nil && t.config.VirtualRoot != "" {
 		a.Command = t.config.RewritePaths(a.Command)
 		if a.Dir != "" {
-			if resolved, err := sandboxResolvePath(t.config, a.Dir); err != nil {
+			if resolved, err := sandboxResolvePath(t.config, a.Dir, false); err != nil {
 				return "", err
 			} else {
 				a.Dir = resolved
@@ -169,9 +170,9 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 					return "", fmt.Errorf("resolve dir: %w", err)
 				}
 			}
-			absDir = cobot.EvalSymlinks(absDir)
-			absWorkdir = cobot.EvalSymlinks(absWorkdir)
-			if !cobot.IsSubpath(absDir, absWorkdir) {
+			absDir = sandbox.EvalSymlinks(absDir)
+			absWorkdir = sandbox.EvalSymlinks(absWorkdir)
+			if !sandbox.IsSubpath(absDir, absWorkdir) {
 				return "", fmt.Errorf("dir %q is outside workspace boundaries", originalDir)
 			}
 			cmd.Dir = absDir
@@ -213,26 +214,12 @@ func checkNetworkCommand(cmdStr string) error {
 
 // isNetworkCommandUsed checks if a network command is referenced in the given command string.
 func isNetworkCommandUsed(cmdStr, nc string) bool {
-	fields := strings.Fields(cmdStr)
-	if len(fields) > 0 {
-		baseCmd := filepath.Base(fields[0])
-		if baseCmd == nc {
-			return true
+	for _, segment := range sandbox.ShellCommandSegments(cmdStr) {
+		fields := strings.Fields(strings.TrimSpace(segment))
+		if len(fields) == 0 {
+			continue
 		}
-	}
-	// Check for nc used as the direct command
-	if cmdStr == nc {
-		return true
-	}
-	// Check various injection patterns
-	patterns := []string{
-		"|" + nc, ";" + nc, "$(" + nc, "`" + nc,
-		" " + nc + " ", "|" + nc + " ", "| " + nc + " ",
-		">" + nc, "<" + nc, "; " + nc,
-		"`" + nc + "`",
-	}
-	for _, p := range patterns {
-		if strings.Contains(cmdStr, p) {
+		if filepath.Base(fields[0]) == nc {
 			return true
 		}
 	}

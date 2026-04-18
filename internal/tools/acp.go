@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cobot-agent/cobot/internal/sandbox"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -28,7 +29,7 @@ type ACPSubAgent struct {
 	timeout      time.Duration
 	systemPrompt string
 	model        string
-	sandbox      *cobot.SandboxConfig
+	sandbox      *sandbox.SandboxConfig
 
 	// runtime state
 	mu      sync.Mutex
@@ -59,7 +60,7 @@ func NewACPSubAgent(command string, args []string, workdir string, timeout time.
 }
 
 // WithACPSandbox sets the sandbox config for path rewriting in ACP responses.
-func WithACPSandbox(s *cobot.SandboxConfig) func(*ACPSubAgent) {
+func WithACPSandbox(s *sandbox.SandboxConfig) func(*ACPSubAgent) {
 	return func(a *ACPSubAgent) { a.sandbox = s }
 }
 

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/cobot-agent/cobot/internal/config"
+	"github.com/cobot-agent/cobot/internal/sandbox"
 	"github.com/cobot-agent/cobot/internal/workspace"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
@@ -32,16 +33,16 @@ var skillUpdateParamsJSON []byte
 const maxPersonaSize = 64 * 1024 // 64 KB
 
 // sandboxDescSuffix appends a sandbox path suffix to a description if sandbox is configured.
-func sandboxDescSuffix(sandbox *cobot.SandboxConfig, desc, pathSuffix string) string {
-	if sandbox != nil && sandbox.VirtualRoot != "" {
-		return desc + fmt.Sprintf(". Files are stored under %s/%s", sandbox.VirtualRoot, pathSuffix)
+func sandboxDescSuffix(cfg *sandbox.SandboxConfig, desc, pathSuffix string) string {
+	if cfg != nil && cfg.VirtualRoot != "" {
+		return desc + fmt.Sprintf(". Files are stored under %s/%s", cfg.VirtualRoot, pathSuffix)
 	}
 	return desc
 }
 
 type WorkspaceConfigUpdateTool struct {
 	workspace *workspace.Workspace
-	sandbox   *cobot.SandboxConfig
+	sandbox   *sandbox.SandboxConfig
 }
 
 func (t *WorkspaceConfigUpdateTool) Name() string { return "workspace_config_update" }
@@ -102,7 +103,7 @@ type skillCreateArgs struct {
 
 type SkillCreateTool struct {
 	workspace *workspace.Workspace
-	sandbox   *cobot.SandboxConfig
+	sandbox   *sandbox.SandboxConfig
 }
 
 func (t *SkillCreateTool) Name() string { return "skill_create" }
@@ -158,7 +159,7 @@ type personaUpdateArgs struct {
 
 type PersonaUpdateTool struct {
 	workspace *workspace.Workspace
-	sandbox   *cobot.SandboxConfig
+	sandbox   *sandbox.SandboxConfig
 }
 
 func (t *PersonaUpdateTool) Name() string { return "persona_update" }
@@ -202,7 +203,7 @@ func (t *PersonaUpdateTool) Execute(ctx context.Context, args json.RawMessage) (
 
 type AgentConfigUpdateTool struct {
 	workspace *workspace.Workspace
-	sandbox   *cobot.SandboxConfig
+	sandbox   *sandbox.SandboxConfig
 }
 
 func (t *AgentConfigUpdateTool) Name() string { return "agent_config_update" }
@@ -267,7 +268,7 @@ func (t *AgentConfigUpdateTool) Execute(ctx context.Context, args json.RawMessag
 
 type SkillUpdateTool struct {
 	workspace *workspace.Workspace
-	sandbox   *cobot.SandboxConfig
+	sandbox   *sandbox.SandboxConfig
 }
 
 func (t *SkillUpdateTool) Name() string { return "skill_update" }
@@ -313,7 +314,7 @@ func (t *SkillUpdateTool) Execute(ctx context.Context, args json.RawMessage) (st
 	return fmt.Sprintf("skill updated: %s", filepath.Base(found)), nil
 }
 
-func RegisterWorkspaceTools(registry cobot.ToolRegistry, ws *workspace.Workspace, sandbox *cobot.SandboxConfig) {
+func RegisterWorkspaceTools(registry cobot.ToolRegistry, ws *workspace.Workspace, sandbox *sandbox.SandboxConfig) {
 	registry.Register(&WorkspaceConfigUpdateTool{workspace: ws, sandbox: sandbox})
 	registry.Register(&SkillCreateTool{workspace: ws, sandbox: sandbox})
 	registry.Register(&PersonaUpdateTool{workspace: ws, sandbox: sandbox})

@@ -69,7 +69,7 @@ func (a *Agent) runLoop(ctx context.Context, prompt, debugLabel string, executeT
 		}
 	}
 
-	return cobot.ErrMaxTurnsExceeded
+	return ErrMaxTurnsExceeded
 }
 
 // storeTurnSTM extracts and stores short-term memory items from the current
@@ -94,7 +94,7 @@ func (a *Agent) storeTurnSTM(ctx context.Context, userMsg, assistantMsg string, 
 
 func (a *Agent) Prompt(ctx context.Context, message string) (*cobot.ProviderResponse, error) {
 	if a.provider == nil {
-		return nil, cobot.ErrProviderNotConfigured
+		return nil, ErrProviderNotConfigured
 	}
 	ctx = a.deriveCtx(ctx)
 
@@ -143,7 +143,7 @@ func (a *Agent) Prompt(ctx context.Context, message string) (*cobot.ProviderResp
 
 func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event, error) {
 	if a.provider == nil {
-		return nil, cobot.ErrProviderNotConfigured
+		return nil, ErrProviderNotConfigured
 	}
 	ctx = a.deriveCtx(ctx)
 
@@ -313,7 +313,7 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 		})
 
 		if err != nil {
-			if errors.Is(err, cobot.ErrMaxTurnsExceeded) {
+			if errors.Is(err, ErrMaxTurnsExceeded) {
 				slog.Debug("max turns exceeded", "turns", a.config.MaxTurns)
 			}
 			sendEvent(cobot.Event{Type: cobot.EventError, Error: err.Error()})

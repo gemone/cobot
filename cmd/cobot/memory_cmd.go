@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/cobot-agent/cobot/internal/memory"
+	"github.com/cobot-agent/cobot/internal/textutil"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -47,7 +48,7 @@ var memorySearchCmd = &cobra.Command{
 		}
 
 		for _, r := range results {
-			fmt.Fprintf(cmd.OutOrStdout(), "[%s] %.2f %s\n", r.ID, r.Score, cobot.Truncate(r.Content, 120))
+			fmt.Fprintf(cmd.OutOrStdout(), "[%s] %.2f %s\n", r.ID, r.Score, textutil.Truncate(r.Content, 120))
 		}
 		return nil
 	},

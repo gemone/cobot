@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	cobot "github.com/cobot-agent/cobot/pkg"
+	sandpkg "github.com/cobot-agent/cobot/internal/sandbox"
 )
 
 func TestReadFileTool(t *testing.T) {
@@ -83,19 +83,21 @@ func TestShellExecToolMultiArg(t *testing.T) {
 
 func TestReadFileTool_SandboxResolve(t *testing.T) {
 	dir := t.TempDir()
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/test", Root: dir}
+	vr := sandpkg.VirtualHome("test")
+	sandbox := &sandpkg.SandboxConfig{VirtualRoot: vr, Root: dir}
 	os.MkdirAll(filepath.Join(dir, "src"), 0755)
 	os.WriteFile(filepath.Join(dir, "src", "main.go"), []byte("package main"), 0644)
 
 	tool := NewReadFileTool(sandbox)
 
 	// Virtual path resolves correctly
-	args, _ := json.Marshal(map[string]string{"path": "/home/test/src/main.go"})
+	vp := sandpkg.PathJoinVirtual(vr, "src/main.go")
+	args, _ := json.Marshal(map[string]string{"path": vp})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := "# /home/test/src/main.go\npackage main"
+	expected := "# " + vp + "\npackage main"
 	if result != expected {
 		t.Errorf("expected %q, got %q", expected, result)
 	}
@@ -103,7 +105,7 @@ func TestReadFileTool_SandboxResolve(t *testing.T) {
 
 func TestReadFileTool_SandboxRejectOutside(t *testing.T) {
 	dir := t.TempDir()
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/test", Root: dir}
+	sandbox := &sandpkg.SandboxConfig{VirtualRoot: sandpkg.VirtualHome("test"), Root: dir}
 
 	tool := NewReadFileTool(sandbox)
 
@@ -116,7 +118,8 @@ func TestReadFileTool_SandboxRejectOutside(t *testing.T) {
 
 func TestReadFileTool_SandboxRejectRelative(t *testing.T) {
 	dir := t.TempDir()
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/test", Root: dir}
+	vr := sandpkg.VirtualHome("test")
+	sandbox := &sandpkg.SandboxConfig{VirtualRoot: vr, Root: dir}
 	os.MkdirAll(filepath.Join(dir, "src"), 0755)
 	os.WriteFile(filepath.Join(dir, "src", "main.go"), []byte("package main"), 0644)
 
@@ -128,7 +131,7 @@ func TestReadFileTool_SandboxRejectRelative(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := "# /home/test/src/main.go\npackage main"
+	expected := "# " + sandpkg.PathJoinVirtual(vr, "src/main.go") + "\npackage main"
 	if result != expected {
 		t.Errorf("expected %q, got %q", expected, result)
 	}
@@ -136,17 +139,20 @@ func TestReadFileTool_SandboxRejectRelative(t *testing.T) {
 
 func TestWriteFileTool_SandboxResolve(t *testing.T) {
 	dir := t.TempDir()
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/test", Root: dir}
+	vr := sandpkg.VirtualHome("test")
+	sandbox := &sandpkg.SandboxConfig{VirtualRoot: vr, Root: dir}
 
 	tool := NewWriteFileTool(sandbox)
 
-	args, _ := json.Marshal(map[string]string{"path": "/home/test/output.txt", "content": "hello"})
+	vp := sandpkg.PathJoinVirtual(vr, "output.txt")
+	args, _ := json.Marshal(map[string]string{"path": vp, "content": "hello"})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result != "wrote /home/test/output.txt" {
-		t.Errorf("expected 'wrote /home/test/output.txt', got %s", result)
+	expected := "wrote " + vp
+	if result != expected {
+		t.Errorf("expected %q, got %s", expected, result)
 	}
 
 	data, _ := os.ReadFile(filepath.Join(dir, "output.txt"))
@@ -157,7 +163,8 @@ func TestWriteFileTool_SandboxResolve(t *testing.T) {
 
 func TestWriteFileTool_SandboxRejectOutside(t *testing.T) {
 	dir := t.TempDir()
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/test", Root: dir}
+	vr := sandpkg.VirtualHome("test")
+	sandbox := &sandpkg.SandboxConfig{VirtualRoot: vr, Root: dir}
 
 	tool := NewWriteFileTool(sandbox)
 
@@ -169,8 +176,10 @@ func TestWriteFileTool_SandboxRejectOutside(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// The written file should appear under the auto-resolved virtual path.
-	if result != "wrote /home/test/tmp/evil.txt" {
-		t.Errorf("expected 'wrote /home/test/tmp/evil.txt', got %q", result)
+	expectedVP := sandpkg.PathJoinVirtual(vr, "tmp/evil.txt")
+	expected := "wrote " + expectedVP
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "tmp", "evil.txt"))
 	if err != nil {
@@ -181,12 +190,39 @@ func TestWriteFileTool_SandboxRejectOutside(t *testing.T) {
 	}
 }
 
+func TestWriteFileTool_SandboxRejectReadonlyPath(t *testing.T) {
+	dir := t.TempDir()
+	readonlyDir := filepath.Join(dir, "readonly")
+	if err := os.MkdirAll(readonlyDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	vr := sandpkg.VirtualHome("test")
+	sandbox := &sandpkg.SandboxConfig{
+		VirtualRoot:   vr,
+		Root:          dir,
+		ReadonlyPaths: []string{readonlyDir},
+	}
+
+	tool := NewWriteFileTool(sandbox)
+	vp := sandpkg.PathJoinVirtual(vr, "readonly/output.txt")
+	args, _ := json.Marshal(map[string]string{"path": vp, "content": "blocked"})
+
+	if _, err := tool.Execute(context.Background(), args); err == nil {
+		t.Fatal("expected readonly write to fail")
+	}
+	if _, err := os.Stat(filepath.Join(readonlyDir, "output.txt")); !os.IsNotExist(err) {
+		t.Fatalf("readonly write should not create file, got stat err=%v", err)
+	}
+}
+
 func TestShellExecTool_SandboxRewriteCommand(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("world"), 0644)
 
-	sandbox := &cobot.SandboxConfig{
-		VirtualRoot:     "/home/test",
+	vr := sandpkg.VirtualHome("test")
+	sandbox := &sandpkg.SandboxConfig{
+		VirtualRoot:     vr,
 		Root:            dir,
 		AllowNetwork:    true,
 		BlockedCommands: nil,
@@ -197,7 +233,8 @@ func TestShellExecTool_SandboxRewriteCommand(t *testing.T) {
 	)
 
 	// The LLM sends a command using the virtual path; the tool should rewrite it.
-	args, _ := json.Marshal(map[string]string{"command": "cat /home/test/hello.txt"})
+	vp := sandpkg.PathJoinVirtual(vr, "hello.txt")
+	args, _ := json.Marshal(map[string]string{"command": "cat " + vp})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -213,8 +250,9 @@ func TestShellExecTool_SandboxRewriteDir(t *testing.T) {
 	sub := filepath.Join(dir, "subdir")
 	os.MkdirAll(sub, 0755)
 
-	sandbox := &cobot.SandboxConfig{
-		VirtualRoot:     "/home/test",
+	vr := sandpkg.VirtualHome("test")
+	sandbox := &sandpkg.SandboxConfig{
+		VirtualRoot:     vr,
 		Root:            dir,
 		AllowNetwork:    true,
 		BlockedCommands: nil,
@@ -225,7 +263,8 @@ func TestShellExecTool_SandboxRewriteDir(t *testing.T) {
 	)
 
 	// The LLM sends dir as a virtual path; the tool should resolve it.
-	args, _ := json.Marshal(map[string]string{"command": "pwd", "dir": "/home/test/subdir"})
+	vp := sandpkg.PathJoinVirtual(vr, "subdir")
+	args, _ := json.Marshal(map[string]string{"command": "pwd", "dir": vp})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -234,17 +273,41 @@ func TestShellExecTool_SandboxRewriteDir(t *testing.T) {
 
 	// With RewriteOutputPaths, the real path in output should be replaced
 	// with the virtual path. pwd returns the real dir, which gets rewritten.
-	expected := "/home/test/subdir"
+	expected := sandpkg.PathJoinVirtual(vr, "subdir")
 	if result != expected {
 		t.Errorf("expected %q, got %q", expected, result)
+	}
+}
+
+func TestShellExecTool_BlocksConfiguredCommandAfterAndAnd(t *testing.T) {
+	tool := NewShellExecTool(
+		WithShellWorkdir(t.TempDir()),
+		WithShellSandboxConfig(&sandpkg.SandboxConfig{BlockedCommands: []string{"echo blocked"}}),
+	)
+
+	args, _ := json.Marshal(map[string]string{"command": "true&&echo blocked"})
+	if _, err := tool.Execute(context.Background(), args); err == nil {
+		t.Fatal("expected blocked command after && to fail")
+	}
+}
+
+func TestShellExecTool_BlocksNetworkCommandAfterAndAnd(t *testing.T) {
+	tool := NewShellExecTool(
+		WithShellWorkdir(t.TempDir()),
+		WithShellSandboxConfig(&sandpkg.SandboxConfig{AllowNetwork: false}),
+	)
+
+	args, _ := json.Marshal(map[string]string{"command": "true&&curl --version"})
+	if _, err := tool.Execute(context.Background(), args); err == nil {
+		t.Fatal("expected network command after && to fail")
 	}
 }
 
 func TestShellExecTool_SandboxRejectDirOutside(t *testing.T) {
 	dir := t.TempDir()
 
-	sandbox := &cobot.SandboxConfig{
-		VirtualRoot:     "/home/test",
+	sandbox := &sandpkg.SandboxConfig{
+		VirtualRoot:     sandpkg.VirtualHome("test"),
 		Root:            dir,
 		AllowNetwork:    true,
 		BlockedCommands: nil,
@@ -275,10 +338,11 @@ func TestShellExecTool_NoSandboxUnchanged(t *testing.T) {
 }
 
 func TestShellExecTool_Description_Sandbox(t *testing.T) {
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
+	vr := sandpkg.VirtualHome("ws")
+	sandbox := &sandpkg.SandboxConfig{VirtualRoot: vr, Root: "/tmp/real"}
 	tool := NewShellExecTool(WithShellSandboxConfig(sandbox))
 	desc := tool.Description()
-	if !strings.Contains(desc, "/home/ws") {
+	if !strings.Contains(desc, vr) {
 		t.Errorf("description should mention VirtualRoot, got %q", desc)
 	}
 }

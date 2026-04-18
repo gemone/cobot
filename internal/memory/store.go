@@ -109,7 +109,7 @@ func (s *Store) storeByNameOnDB(ctx context.Context, db *sql.DB, content, wingNa
 	// Create wing if not exists on the target DB.
 	var wingID string
 	row := db.QueryRowContext(ctx, sqlSelectWingByName, wingName)
-	var w cobot.Wing
+	var w Wing
 	var kwJSON string
 	if err := row.Scan(&w.ID, &w.Name, &w.Type, &kwJSON); err == sql.ErrNoRows {
 		wingID = newID()
@@ -124,7 +124,7 @@ func (s *Store) storeByNameOnDB(ctx context.Context, db *sql.DB, content, wingNa
 
 	// Create room if not exists on the target DB.
 	var roomID string
-	var r cobot.Room
+	var r Room
 	rRow := db.QueryRowContext(ctx, sqlSelectRoomByName, wingID, roomName)
 	if err := rRow.Scan(&r.ID, &r.WingID, &r.Name, &r.HallType); err == sql.ErrNoRows {
 		roomID = newID()

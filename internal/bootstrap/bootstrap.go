@@ -17,6 +17,7 @@ import (
 	"github.com/cobot-agent/cobot/internal/cron"
 	"github.com/cobot-agent/cobot/internal/llm"
 	"github.com/cobot-agent/cobot/internal/memory"
+	"github.com/cobot-agent/cobot/internal/sandbox"
 	"github.com/cobot-agent/cobot/internal/skills"
 	"github.com/cobot-agent/cobot/internal/tools"
 	"github.com/cobot-agent/cobot/internal/workspace"
@@ -171,8 +172,8 @@ func configureMemory(sm *agent.SessionManager, ws *workspace.Workspace) *memory.
 	return store
 }
 
-func configureSandboxTools(a *agent.Agent, ws *workspace.Workspace, agentCfg *config.AgentConfig) *cobot.SandboxConfig {
-	var agentSandbox *cobot.SandboxConfig
+func configureSandboxTools(a *agent.Agent, ws *workspace.Workspace, agentCfg *config.AgentConfig) *sandbox.SandboxConfig {
+	var agentSandbox *sandbox.SandboxConfig
 	if agentCfg != nil {
 		agentSandbox = agentCfg.Sandbox
 	}
@@ -203,7 +204,7 @@ func configureSandboxTools(a *agent.Agent, ws *workspace.Workspace, agentCfg *co
 	return sandbox
 }
 
-func configureMemoryTools(a *agent.Agent, store *memory.Store, sandbox *cobot.SandboxConfig) {
+func configureMemoryTools(a *agent.Agent, store *memory.Store, sandbox *sandbox.SandboxConfig) {
 	if store != nil {
 		a.RegisterTool(memory.NewMemorySearchTool(store, sandbox))
 		a.RegisterTool(memory.NewMemoryStoreTool(store, sandbox))
@@ -211,7 +212,7 @@ func configureMemoryTools(a *agent.Agent, store *memory.Store, sandbox *cobot.Sa
 	}
 }
 
-func configureDelegateTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.ModelResolver, sandbox *cobot.SandboxConfig) {
+func configureDelegateTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.ModelResolver, sandbox *sandbox.SandboxConfig) {
 	a.RegisterTool(tools.NewDelegateTool(func() cobot.SubAgent {
 		filtered := a.ToolRegistry().Clone().Without("delegate_task", "memory_store", "memory_search", "l3_deep_search")
 		return newSubAgent(a, registry, filtered)

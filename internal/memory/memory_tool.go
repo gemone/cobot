@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/cobot-agent/cobot/internal/sandbox"
+	"github.com/cobot-agent/cobot/internal/textutil"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -28,10 +30,10 @@ type memorySearchArgs struct {
 
 type MemorySearchTool struct {
 	store   *Store
-	sandbox *cobot.SandboxConfig
+	sandbox *sandbox.SandboxConfig
 }
 
-func NewMemorySearchTool(s *Store, sandbox ...*cobot.SandboxConfig) *MemorySearchTool {
+func NewMemorySearchTool(s *Store, sandbox ...*sandbox.SandboxConfig) *MemorySearchTool {
 	t := &MemorySearchTool{store: s}
 	if len(sandbox) > 0 {
 		t.sandbox = sandbox[0]
@@ -84,10 +86,10 @@ type memoryStoreArgs struct {
 
 type MemoryStoreTool struct {
 	store   *Store
-	sandbox *cobot.SandboxConfig
+	sandbox *sandbox.SandboxConfig
 }
 
-func NewMemoryStoreTool(s *Store, sandbox ...*cobot.SandboxConfig) *MemoryStoreTool {
+func NewMemoryStoreTool(s *Store, sandbox ...*sandbox.SandboxConfig) *MemoryStoreTool {
 	t := &MemoryStoreTool{store: s}
 	if len(sandbox) > 0 {
 		t.sandbox = sandbox[0]
@@ -139,10 +141,10 @@ type l3SearchArgs struct {
 
 type L3DeepSearchTool struct {
 	store   *Store
-	sandbox *cobot.SandboxConfig
+	sandbox *sandbox.SandboxConfig
 }
 
-func NewL3DeepSearchTool(s *Store, sandbox ...*cobot.SandboxConfig) *L3DeepSearchTool {
+func NewL3DeepSearchTool(s *Store, sandbox ...*sandbox.SandboxConfig) *L3DeepSearchTool {
 	t := &L3DeepSearchTool{store: s}
 	if len(sandbox) > 0 {
 		t.sandbox = sandbox[0]
@@ -175,7 +177,7 @@ func (t *L3DeepSearchTool) Execute(ctx context.Context, args json.RawMessage) (s
 
 	out := fmt.Sprintf("Deep search found %d results:\n", len(results))
 	for _, r := range results {
-		content := cobot.Truncate(r.Content, 200)
+		content := textutil.Truncate(r.Content, 200)
 		out += fmt.Sprintf("  - [%.4f][%s] %s\n", r.Score, r.Tier1, content)
 	}
 	return out, nil
@@ -187,4 +189,4 @@ var (
 	_ cobot.Tool = (*L3DeepSearchTool)(nil)
 )
 
-var sandboxRewriteError = (*cobot.SandboxConfig).RewriteError
+var sandboxRewriteError = (*sandbox.SandboxConfig).RewriteError

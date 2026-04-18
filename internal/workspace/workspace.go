@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/cobot-agent/cobot/internal/config"
+	"github.com/cobot-agent/cobot/internal/sandbox"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -44,7 +45,7 @@ type WorkspaceConfig struct {
 	UpdatedAt      time.Time                   `yaml:"updated_at"`
 	EnabledMCP     []string                    `yaml:"enabled_mcp,omitempty"`
 	EnabledSkills  []string                    `yaml:"enabled_skills,omitempty"`
-	Sandbox        cobot.SandboxConfig         `yaml:"sandbox,omitempty"`
+	Sandbox        sandbox.SandboxConfig       `yaml:"sandbox,omitempty"`
 	DefaultAgent   string                      `yaml:"default_agent,omitempty"`
 	ExternalAgents []cobot.ExternalAgentConfig `yaml:"external_agents,omitempty"`
 }
@@ -113,7 +114,11 @@ func (w *Workspace) ExternalAgent(name string) (*cobot.ExternalAgentConfig, bool
 
 // EffectiveSandbox returns the final SandboxConfig by merging workspace config
 // with optional agent-level overrides.
-func (w *Workspace) EffectiveSandbox(agentSandbox *cobot.SandboxConfig) *cobot.SandboxConfig {
+// When no explicit sandbox root is configured, it falls back to the workspace
+// definition root or the workspace config root — matching the logic used by
+// resolveSandboxRoot for the shell tool — so that filesystem tools correctly
+// resolve relative paths inside the workspace directory.
+func (w *Workspace) EffectiveSandbox(agentSandbox *sandbox.SandboxConfig) *sandbox.SandboxConfig {
 	cfg := w.Config.Sandbox
 	if agentSandbox != nil {
 		if agentSandbox.Root != "" {
@@ -127,12 +132,22 @@ func (w *Workspace) EffectiveSandbox(agentSandbox *cobot.SandboxConfig) *cobot.S
 		}
 	}
 
-	var virtualRoot string
-	if cfg.Root != "" {
-		virtualRoot = "/home/" + w.Config.Name
+	// Fall back to workspace root when no explicit sandbox root is set,
+	// keeping filesystem tools consistent with the shell tool's behavior.
+	if cfg.Root == "" {
+		if w.Config.Root != "" {
+			cfg.Root = w.Config.Root
+		} else if w.Definition.Root != "" {
+			cfg.Root = w.Definition.Root
+		}
 	}
 
-	return &cobot.SandboxConfig{
+	var virtualRoot string
+	if cfg.Root != "" {
+		virtualRoot = sandbox.VirtualHome(w.Config.Name)
+	}
+
+	return &sandbox.SandboxConfig{
 		VirtualRoot:     virtualRoot,
 		Root:            cfg.Root,
 		AllowPaths:      cfg.AllowPaths,
@@ -216,14 +231,14 @@ func (w *Workspace) ValidatePath(path string) error {
 	if err != nil {
 		return fmt.Errorf("resolve path: %w", err)
 	}
-	absPath = cobot.EvalSymlinks(absPath)
+	absPath = sandbox.EvalSymlinks(absPath)
 
 	dataDir, err := filepath.Abs(w.DataDir)
 	if err != nil {
 		return fmt.Errorf("resolve data dir: %w", err)
 	}
-	dataDir = cobot.EvalSymlinks(dataDir)
-	if cobot.IsSubpath(absPath, dataDir) {
+	dataDir = sandbox.EvalSymlinks(dataDir)
+	if sandbox.IsSubpath(absPath, dataDir) {
 		return nil
 	}
 
@@ -232,8 +247,8 @@ func (w *Workspace) ValidatePath(path string) error {
 		if err != nil {
 			return fmt.Errorf("resolve root dir: %w", err)
 		}
-		rootDir = cobot.EvalSymlinks(rootDir)
-		if cobot.IsSubpath(absPath, rootDir) {
+		rootDir = sandbox.EvalSymlinks(rootDir)
+		if sandbox.IsSubpath(absPath, rootDir) {
 			return nil
 		}
 	}

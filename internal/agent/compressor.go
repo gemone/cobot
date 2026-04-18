@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/cobot-agent/cobot/internal/textutil"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -103,7 +104,7 @@ func (c *Compressor) callLLMSummarize(ctx context.Context, messages []cobot.Mess
 			sb.WriteString(fmt.Sprintf("  tool_call: %s(%s)\n", tc.Name, string(tc.Arguments)))
 		}
 		if m.ToolResult != nil {
-			sb.WriteString(fmt.Sprintf("  tool_result: %s\n", cobot.Truncate(m.ToolResult.Output, 500)))
+			sb.WriteString(fmt.Sprintf("  tool_result: %s\n", textutil.Truncate(m.ToolResult.Output, 500)))
 		}
 	}
 
@@ -139,7 +140,7 @@ func (c *Compressor) OptimizeSummary(ctx context.Context, summary string, origin
 			sb.WriteString(fmt.Sprintf("... (%d more messages)\n", len(originalMessages)-10))
 			break
 		}
-		sb.WriteString(fmt.Sprintf("[%s]: %s\n", m.Role, cobot.Truncate(m.Content, 200)))
+		sb.WriteString(fmt.Sprintf("[%s]: %s\n", m.Role, textutil.Truncate(m.Content, 200)))
 	}
 
 	req := &cobot.ProviderRequest{

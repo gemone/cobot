@@ -57,7 +57,7 @@ func (s *Store) WakeUpWithDeepSearch(ctx context.Context, deepSearch bool) (stri
 	return b.String(), nil
 }
 
-func (s *Store) collectFacts(ctx context.Context, wings []*cobot.Wing) []string {
+func (s *Store) collectFacts(ctx context.Context, wings []*Wing) []string {
 	var facts []string
 	for _, w := range wings {
 		rooms, err := s.GetRooms(ctx, w.ID)
@@ -84,7 +84,7 @@ func (s *Store) collectFacts(ctx context.Context, wings []*cobot.Wing) []string 
 	return facts
 }
 
-func (s *Store) collectRoomRecall(ctx context.Context, wings []*cobot.Wing) []string {
+func (s *Store) collectRoomRecall(ctx context.Context, wings []*Wing) []string {
 	var contexts []string
 	for _, w := range wings {
 		rooms, err := s.GetRooms(ctx, w.ID)
@@ -133,7 +133,7 @@ func (s *Store) WakeUpSTM(ctx context.Context, sessionID string) (string, error)
 	}
 
 	// Look up the session wing in the STM DB.
-	var w cobot.Wing
+	var w Wing
 	var kwJSON string
 	row := stmDB.QueryRowContext(ctx, sqlSelectWingByName, stmWingName)
 	if err := row.Scan(&w.ID, &w.Name, &w.Type, &kwJSON); err == sql.ErrNoRows {
@@ -142,15 +142,15 @@ func (s *Store) WakeUpSTM(ctx context.Context, sessionID string) (string, error)
 		return "", nil
 	}
 
-	rooms, err := func() ([]*cobot.Room, error) {
+	rooms, err := func() ([]*Room, error) {
 		rows, err := stmDB.QueryContext(ctx, sqlSelectRooms, w.ID)
 		if err != nil {
 			return nil, err
 		}
 		defer rows.Close()
-		var rooms []*cobot.Room
+		var rooms []*Room
 		for rows.Next() {
-			var r cobot.Room
+			var r Room
 			if err := rows.Scan(&r.ID, &r.WingID, &r.Name, &r.HallType); err != nil {
 				return nil, err
 			}
@@ -175,7 +175,7 @@ func (s *Store) WakeUpSTM(ctx context.Context, sessionID string) (string, error)
 	}
 
 	// Index rooms by name for quick lookup.
-	roomByName := make(map[string]*cobot.Room)
+	roomByName := make(map[string]*Room)
 	for _, room := range rooms {
 		roomByName[room.Name] = room
 	}
@@ -197,7 +197,7 @@ func (s *Store) WakeUpSTM(ctx context.Context, sessionID string) (string, error)
 		}
 		var count int
 		for rows.Next() {
-			var d cobot.Drawer
+			var d Drawer
 			if err := rows.Scan(&d.ID, &d.RoomID, &d.Content, &d.CreatedAt); err != nil {
 				rows.Close()
 				continue

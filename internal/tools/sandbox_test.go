@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	cobot "github.com/cobot-agent/cobot/pkg"
+	sandboxpkg "github.com/cobot-agent/cobot/internal/sandbox"
 )
 
 // --- ListDirTool sandbox integration tests ---
@@ -19,10 +19,11 @@ func TestListDirTool_SandboxResolve(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "src", "main.go"), []byte("package main"), 0644)
 	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# test"), 0644)
 
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
+	vr := sandboxpkg.VirtualHome("myworkspace")
+	sandbox := &sandboxpkg.SandboxConfig{VirtualRoot: vr, Root: dir}
 	tool := NewListDirTool(sandbox)
 
-	args, _ := json.Marshal(map[string]string{"path": "/home/myworkspace"})
+	args, _ := json.Marshal(map[string]string{"path": vr})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
 		t.Fatal(err)
@@ -30,14 +31,15 @@ func TestListDirTool_SandboxResolve(t *testing.T) {
 	if !strings.Contains(result, "src/") {
 		t.Errorf("expected listing to contain 'src/', got %q", result)
 	}
-	if !strings.Contains(result, "/home/myworkspace/README.md") {
-		t.Errorf("expected listing to show virtual path /home/myworkspace/README.md, got %q", result)
+	vrREADME := sandboxpkg.PathJoinVirtual(vr, "README.md")
+	if !strings.Contains(result, vrREADME) {
+		t.Errorf("expected listing to show virtual path %s, got %q", vrREADME, result)
 	}
 }
 
 func TestListDirTool_SandboxAutoResolveOutside(t *testing.T) {
 	dir := t.TempDir()
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
+	sandbox := &sandboxpkg.SandboxConfig{VirtualRoot: sandboxpkg.VirtualHome("myworkspace"), Root: dir}
 	tool := NewListDirTool(sandbox)
 
 	args, _ := json.Marshal(map[string]string{"path": "/etc"})
@@ -58,7 +60,8 @@ func TestListDirTool_SandboxRelativePath(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "src"), 0755)
 	os.WriteFile(filepath.Join(dir, "src", "main.go"), []byte("package main"), 0644)
 
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
+	vr := sandboxpkg.VirtualHome("myworkspace")
+	sandbox := &sandboxpkg.SandboxConfig{VirtualRoot: vr, Root: dir}
 	tool := NewListDirTool(sandbox)
 
 	// Relative path should auto-resolve under VirtualRoot
@@ -67,8 +70,9 @@ func TestListDirTool_SandboxRelativePath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result, "/home/myworkspace/src/main.go") {
-		t.Errorf("expected listing to use virtual paths, got %q", result)
+	vp := sandboxpkg.PathJoinVirtual(vr, "src/main.go")
+	if !strings.Contains(result, vp) {
+		t.Errorf("expected listing to use virtual path %s, got %q", vp, result)
 	}
 }
 
@@ -95,28 +99,31 @@ func TestSearchFilesTool_SandboxResolve(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "src", "main.go"), []byte("package main"), 0644)
 	os.WriteFile(filepath.Join(dir, "src", "util.go"), []byte("package main"), 0644)
 
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
+	vr := sandboxpkg.VirtualHome("myworkspace")
+	sandbox := &sandboxpkg.SandboxConfig{VirtualRoot: vr, Root: dir}
 	tool := NewSearchFilesTool(sandbox)
 
-	args, _ := json.Marshal(map[string]string{"path": "/home/myworkspace", "pattern": "*.go"})
+	args, _ := json.Marshal(map[string]string{"path": vr, "pattern": "*.go"})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result, "/home/myworkspace/src/main.go") {
+	vMain := sandboxpkg.PathJoinVirtual(vr, "src/main.go")
+	if !strings.Contains(result, vMain) {
 		t.Errorf("expected virtual path in search results, got %q", result)
 	}
-	if !strings.Contains(result, "/home/myworkspace/src/util.go") {
+	vUtil := sandboxpkg.PathJoinVirtual(vr, "src/util.go")
+	if !strings.Contains(result, vUtil) {
 		t.Errorf("expected virtual path in search results, got %q", result)
 	}
 }
 
 func TestSearchFilesTool_SandboxAutoResolveOutside(t *testing.T) {
 	dir := t.TempDir()
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
+	sandbox := &sandboxpkg.SandboxConfig{VirtualRoot: sandboxpkg.VirtualHome("myworkspace"), Root: dir}
 	tool := NewSearchFilesTool(sandbox)
 
-	// /tmp auto-resolves to /home/myworkspace/tmp → dir/tmp (doesn't exist)
+	// /tmp auto-resolves to <vr>/tmp → dir/tmp (doesn't exist)
 	args, _ := json.Marshal(map[string]string{"path": "/tmp", "pattern": "*.txt"})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
@@ -133,7 +140,8 @@ func TestSearchFilesTool_SandboxRelativePath(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "src"), 0755)
 	os.WriteFile(filepath.Join(dir, "src", "main.go"), []byte("package main"), 0644)
 
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
+	vr := sandboxpkg.VirtualHome("myworkspace")
+	sandbox := &sandboxpkg.SandboxConfig{VirtualRoot: vr, Root: dir}
 	tool := NewSearchFilesTool(sandbox)
 
 	// Relative path auto-resolves
@@ -142,7 +150,8 @@ func TestSearchFilesTool_SandboxRelativePath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result, "/home/myworkspace/src/main.go") {
+	vp := sandboxpkg.PathJoinVirtual(vr, "src/main.go")
+	if !strings.Contains(result, vp) {
 		t.Errorf("expected virtual path in search results, got %q", result)
 	}
 }
@@ -165,37 +174,41 @@ func TestSearchFilesTool_NoSandbox(t *testing.T) {
 // --- Tool Description sandbox tests ---
 
 func TestReadFileTool_Description_Sandbox(t *testing.T) {
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
+	vr := sandboxpkg.VirtualHome("ws")
+	sandbox := &sandboxpkg.SandboxConfig{VirtualRoot: vr, Root: "/tmp/real"}
 	tool := NewReadFileTool(sandbox)
 	desc := tool.Description()
-	if !strings.Contains(desc, "/home/ws") {
+	if !strings.Contains(desc, vr) {
 		t.Errorf("description should mention VirtualRoot, got %q", desc)
 	}
 }
 
 func TestWriteFileTool_Description_Sandbox(t *testing.T) {
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
+	vr := sandboxpkg.VirtualHome("ws")
+	sandbox := &sandboxpkg.SandboxConfig{VirtualRoot: vr, Root: "/tmp/real"}
 	tool := NewWriteFileTool(sandbox)
 	desc := tool.Description()
-	if !strings.Contains(desc, "/home/ws") {
+	if !strings.Contains(desc, vr) {
 		t.Errorf("description should mention VirtualRoot, got %q", desc)
 	}
 }
 
 func TestListDirTool_Description_Sandbox(t *testing.T) {
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
+	vr := sandboxpkg.VirtualHome("ws")
+	sandbox := &sandboxpkg.SandboxConfig{VirtualRoot: vr, Root: "/tmp/real"}
 	tool := NewListDirTool(sandbox)
 	desc := tool.Description()
-	if !strings.Contains(desc, "/home/ws") {
+	if !strings.Contains(desc, vr) {
 		t.Errorf("description should mention VirtualRoot, got %q", desc)
 	}
 }
 
 func TestSearchFilesTool_Description_Sandbox(t *testing.T) {
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/ws", Root: "/tmp/real"}
+	vr := sandboxpkg.VirtualHome("ws")
+	sandbox := &sandboxpkg.SandboxConfig{VirtualRoot: vr, Root: "/tmp/real"}
 	tool := NewSearchFilesTool(sandbox)
 	desc := tool.Description()
-	if !strings.Contains(desc, "/home/ws") {
+	if !strings.Contains(desc, vr) {
 		t.Errorf("description should mention VirtualRoot, got %q", desc)
 	}
 }
@@ -204,17 +217,19 @@ func TestSearchFilesTool_Description_Sandbox(t *testing.T) {
 
 func TestReadFileTool_SandboxVirtualPathHeader(t *testing.T) {
 	dir := t.TempDir()
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
+	vr := sandboxpkg.VirtualHome("myworkspace")
+	sandbox := &sandboxpkg.SandboxConfig{VirtualRoot: vr, Root: dir}
 	os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("world"), 0644)
 
 	tool := NewReadFileTool(sandbox)
-	args, _ := json.Marshal(map[string]string{"path": "/home/myworkspace/hello.txt"})
+	vp := sandboxpkg.PathJoinVirtual(vr, "hello.txt")
+	args, _ := json.Marshal(map[string]string{"path": vp})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if !strings.HasPrefix(result, "# /home/myworkspace/hello.txt\n") {
+	if !strings.HasPrefix(result, "# "+vp+"\n") {
 		t.Errorf("expected virtual path header, got %q", result)
 	}
 	if !strings.Contains(result, "world") {
@@ -245,17 +260,19 @@ func TestReadFileTool_NoSandboxNoHeader(t *testing.T) {
 
 func TestWriteFileTool_SandboxVirtualPathOutput(t *testing.T) {
 	dir := t.TempDir()
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
+	vr := sandboxpkg.VirtualHome("myworkspace")
+	sandbox := &sandboxpkg.SandboxConfig{VirtualRoot: vr, Root: dir}
 
 	tool := NewWriteFileTool(sandbox)
-	args, _ := json.Marshal(map[string]string{"path": "/home/myworkspace/output.txt", "content": "hello"})
+	vp := sandboxpkg.PathJoinVirtual(vr, "output.txt")
+	args, _ := json.Marshal(map[string]string{"path": vp, "content": "hello"})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if result != "wrote /home/myworkspace/output.txt" {
-		t.Errorf("expected 'wrote /home/myworkspace/output.txt', got %q", result)
+	if result != "wrote "+vp {
+		t.Errorf("expected %q, got %q", "wrote "+vp, result)
 	}
 }
 
@@ -280,16 +297,18 @@ func TestReadFileTool_SandboxAutoResolvesAbsolute(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "etc"), 0755)
 	os.WriteFile(filepath.Join(dir, "etc", "passwd"), []byte("root:x:0:0"), 0644)
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
+	vr := sandboxpkg.VirtualHome("myworkspace")
+	sandbox := &sandboxpkg.SandboxConfig{VirtualRoot: vr, Root: dir}
 	tool := NewReadFileTool(sandbox)
 
-	// /etc/passwd auto-resolves to /home/myworkspace/etc/passwd → dir/etc/passwd
+	// /etc/passwd auto-resolves to <vr>/etc/passwd → dir/etc/passwd
 	args, _ := json.Marshal(map[string]string{"path": "/etc/passwd"})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(result, "# /home/myworkspace/etc/passwd\n") {
+	vp := sandboxpkg.PathJoinVirtual(vr, "etc/passwd")
+	if !strings.HasPrefix(result, "# "+vp+"\n") {
 		t.Errorf("expected auto-resolved virtual path header, got %q", result)
 	}
 }
@@ -297,17 +316,19 @@ func TestReadFileTool_SandboxAutoResolvesAbsolute(t *testing.T) {
 func TestWriteFileTool_SandboxAutoResolvesAbsolute(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "tmp"), 0755) // create parent dir for auto-resolved path
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
+	vr := sandboxpkg.VirtualHome("myworkspace")
+	sandbox := &sandboxpkg.SandboxConfig{VirtualRoot: vr, Root: dir}
 	tool := NewWriteFileTool(sandbox)
 
-	// /tmp/output.txt auto-resolves to /home/myworkspace/tmp/output.txt
+	// /tmp/output.txt auto-resolves to <vr>/tmp/output.txt
 	args, _ := json.Marshal(map[string]string{"path": "/tmp/output.txt", "content": "test"})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result != "wrote /home/myworkspace/tmp/output.txt" {
-		t.Errorf("expected 'wrote /home/myworkspace/tmp/output.txt', got %q", result)
+	vp := sandboxpkg.PathJoinVirtual(vr, "tmp/output.txt")
+	if result != "wrote "+vp {
+		t.Errorf("expected %q, got %q", "wrote "+vp, result)
 	}
 	// Verify file was written at auto-resolved real path
 	data, err := os.ReadFile(filepath.Join(dir, "tmp", "output.txt"))
@@ -323,7 +344,8 @@ func TestListDirTool_SandboxAutoResolvesAbsolute(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "var", "log"), 0755)
 	os.WriteFile(filepath.Join(dir, "var", "log", "app.log"), []byte("log data"), 0644)
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
+	vr := sandboxpkg.VirtualHome("myworkspace")
+	sandbox := &sandboxpkg.SandboxConfig{VirtualRoot: vr, Root: dir}
 	tool := NewListDirTool(sandbox)
 
 	args, _ := json.Marshal(map[string]string{"path": "/var/log"})
@@ -331,7 +353,8 @@ func TestListDirTool_SandboxAutoResolvesAbsolute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result, "/home/myworkspace/var/log/app.log") {
+	vp := sandboxpkg.PathJoinVirtual(vr, "var/log/app.log")
+	if !strings.Contains(result, vp) {
 		t.Errorf("expected virtual path in listing, got %q", result)
 	}
 }
@@ -340,7 +363,8 @@ func TestSearchFilesTool_SandboxAutoResolvesAbsolute(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "usr", "local"), 0755)
 	os.WriteFile(filepath.Join(dir, "usr", "local", "app.go"), []byte("package main"), 0644)
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
+	vr := sandboxpkg.VirtualHome("myworkspace")
+	sandbox := &sandboxpkg.SandboxConfig{VirtualRoot: vr, Root: dir}
 	tool := NewSearchFilesTool(sandbox)
 
 	args, _ := json.Marshal(map[string]string{"path": "/usr/local", "pattern": "*.go"})
@@ -348,7 +372,8 @@ func TestSearchFilesTool_SandboxAutoResolvesAbsolute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result, "/home/myworkspace/usr/local/app.go") {
+	vp := sandboxpkg.PathJoinVirtual(vr, "usr/local/app.go")
+	if !strings.Contains(result, vp) {
 		t.Errorf("expected virtual path in search results, got %q", result)
 	}
 }
@@ -358,7 +383,8 @@ func TestSearchFilesTool_SandboxAutoResolvesAbsolute(t *testing.T) {
 func TestReadFileTool_SandboxRealRootPathMatch(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("world"), 0644)
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/ws", Root: dir}
+	vr := sandboxpkg.VirtualHome("ws")
+	sandbox := &sandboxpkg.SandboxConfig{VirtualRoot: vr, Root: dir}
 	tool := NewReadFileTool(sandbox)
 
 	// LLM accidentally uses the real Root path instead of VirtualRoot
@@ -367,7 +393,8 @@ func TestReadFileTool_SandboxRealRootPathMatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(result, "# /home/ws/hello.txt\n") {
+	vp := sandboxpkg.PathJoinVirtual(vr, "hello.txt")
+	if !strings.HasPrefix(result, "# "+vp+"\n") {
 		t.Errorf("expected virtual path in output, got %q", result)
 	}
 }
@@ -377,7 +404,8 @@ func TestReadFileTool_SandboxRealRootPathMatch(t *testing.T) {
 func TestWriteFileTool_SandboxRelativeAutoResolve(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "src"), 0755)
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/myworkspace", Root: dir}
+	vr := sandboxpkg.VirtualHome("myworkspace")
+	sandbox := &sandboxpkg.SandboxConfig{VirtualRoot: vr, Root: dir}
 	tool := NewWriteFileTool(sandbox)
 
 	// Relative path should auto-resolve under VirtualRoot
@@ -386,8 +414,9 @@ func TestWriteFileTool_SandboxRelativeAutoResolve(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result != "wrote /home/myworkspace/src/main.go" {
-		t.Errorf("expected 'wrote /home/myworkspace/src/main.go', got %q", result)
+	vp := sandboxpkg.PathJoinVirtual(vr, "src/main.go")
+	if result != "wrote "+vp {
+		t.Errorf("expected %q, got %q", "wrote "+vp, result)
 	}
 
 	data, err := os.ReadFile(filepath.Join(dir, "src", "main.go"))
@@ -402,7 +431,8 @@ func TestWriteFileTool_SandboxRelativeAutoResolve(t *testing.T) {
 // --- Registration test: ensure all tools are instantiable with and without sandbox ---
 
 func TestAllFilesystemTools_WithSandbox(t *testing.T) {
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/test", Root: t.TempDir()}
+	vr := sandboxpkg.VirtualHome("test")
+	sandbox := &sandboxpkg.SandboxConfig{VirtualRoot: vr, Root: t.TempDir()}
 
 	registry := NewRegistry()
 	registry.Register(NewReadFileTool(sandbox))
@@ -418,7 +448,7 @@ func TestAllFilesystemTools_WithSandbox(t *testing.T) {
 			continue
 		}
 		desc := tool.Description()
-		if !strings.Contains(desc, "/home/test") {
+		if !strings.Contains(desc, vr) {
 			t.Errorf("tool %q description should mention VirtualRoot, got %q", name, desc)
 		}
 	}
@@ -444,17 +474,19 @@ func TestAllFilesystemTools_WithoutSandbox(t *testing.T) {
 
 func TestWriteFileTool_SandboxCreatesParentDirs(t *testing.T) {
 	dir := t.TempDir()
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/ws", Root: dir}
+	vr := sandboxpkg.VirtualHome("ws")
+	sandbox := &sandboxpkg.SandboxConfig{VirtualRoot: vr, Root: dir}
 	tool := NewWriteFileTool(sandbox)
 
 	// Write to a nested path where parent dirs don't exist
-	args, _ := json.Marshal(map[string]string{"path": "/home/ws/deep/nested/file.txt", "content": "hello"})
+	vp := sandboxpkg.PathJoinVirtual(vr, "deep/nested/file.txt")
+	args, _ := json.Marshal(map[string]string{"path": vp, "content": "hello"})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result != "wrote /home/ws/deep/nested/file.txt" {
-		t.Errorf("expected 'wrote /home/ws/deep/nested/file.txt', got %q", result)
+	if result != "wrote "+vp {
+		t.Errorf("expected %q, got %q", "wrote "+vp, result)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "deep", "nested", "file.txt"))
 	if err != nil {
@@ -471,8 +503,9 @@ func TestShellExecTool_SandboxAutoResolvesDir(t *testing.T) {
 	dir := t.TempDir()
 	// Create the "src" directory so the shell can chdir into it.
 	os.MkdirAll(filepath.Join(dir, "src"), 0755)
-	sandbox := &cobot.SandboxConfig{
-		VirtualRoot: "/home/ws",
+	vr := sandboxpkg.VirtualHome("ws")
+	sandbox := &sandboxpkg.SandboxConfig{
+		VirtualRoot: vr,
 		Root:        dir,
 	}
 	tool := NewShellExecTool(
@@ -487,7 +520,7 @@ func TestShellExecTool_SandboxAutoResolvesDir(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// The output should contain the virtual path (RewriteOutputPaths rewrites real → virtual)
-	if !strings.Contains(result, "/home/ws") && result != "" {
+	if !strings.Contains(result, vr) && result != "" {
 		t.Errorf("expected output with virtual path, got %q", result)
 	}
 }

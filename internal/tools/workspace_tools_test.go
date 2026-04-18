@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cobot-agent/cobot/internal/sandbox"
 	"github.com/cobot-agent/cobot/internal/workspace"
-	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
 func newTestWorkspace(t *testing.T) *workspace.Workspace {
@@ -299,8 +299,9 @@ func TestWorkspaceConfigUpdateTool_SandboxRejectOutsidePath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sandbox := &cobot.SandboxConfig{VirtualRoot: "/home/test", Root: "/tmp/real"}
-	tool := &WorkspaceConfigUpdateTool{workspace: ws, sandbox: sandbox}
+	vr := sandbox.VirtualHome("test")
+	sandboxCfg := &sandbox.SandboxConfig{VirtualRoot: vr, Root: "/tmp/real"}
+	tool := &WorkspaceConfigUpdateTool{workspace: ws, sandbox: sandboxCfg}
 
 	args, _ := json.Marshal(map[string]interface{}{
 		"sandbox_root": "/etc/evil",

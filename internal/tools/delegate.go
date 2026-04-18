@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cobot-agent/cobot/internal/sandbox"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -28,7 +29,7 @@ type DelegateTool struct {
 	factory     SubAgentFactory
 	workdir     string
 	agentLookup ExternalAgentLookup // to lookup external agent configs
-	sandbox     *cobot.SandboxConfig
+	sandbox     *sandbox.SandboxConfig
 }
 
 func WithDelegateWorkdir(workdir string) func(*DelegateTool) {
@@ -39,7 +40,7 @@ func WithDelegateAgentLookup(l ExternalAgentLookup) func(*DelegateTool) {
 	return func(t *DelegateTool) { t.agentLookup = l }
 }
 
-func WithDelegateSandbox(s *cobot.SandboxConfig) func(*DelegateTool) {
+func WithDelegateSandbox(s *sandbox.SandboxConfig) func(*DelegateTool) {
 	return func(t *DelegateTool) { t.sandbox = s }
 }
 

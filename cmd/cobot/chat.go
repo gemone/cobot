@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 
+	"github.com/cobot-agent/cobot/internal/textutil"
 	"github.com/spf13/cobra"
 
 	"github.com/cobot-agent/cobot/internal/bootstrap"
@@ -58,7 +59,7 @@ var chatCmd = &cobra.Command{
 			case cobot.EventToolCall:
 				fmt.Fprintf(os.Stderr, "[Tool: %s]\n", event.ToolCall.Name)
 			case cobot.EventToolResult:
-				fmt.Fprintf(os.Stderr, "[Result: %s]\n", cobot.Truncate(event.Content, 100))
+				fmt.Fprintf(os.Stderr, "[Result: %s]\n", textutil.Truncate(event.Content, 100))
 			case cobot.EventDone:
 				fmt.Println()
 			case cobot.EventError:

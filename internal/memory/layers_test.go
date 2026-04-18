@@ -4,8 +4,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-
-	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
 func TestWakeUpBasic(t *testing.T) {
@@ -36,11 +34,11 @@ func TestWakeUpWithFacts(t *testing.T) {
 
 	ctx := context.Background()
 
-	wing := &cobot.Wing{Name: "test"}
+	wing := &Wing{Name: "test"}
 	s.CreateWing(ctx, wing)
-	room := &cobot.Room{WingID: wing.ID, Name: "facts", HallType: "facts"}
+	room := &Room{WingID: wing.ID, Name: "facts", HallType: "facts"}
 	s.CreateRoom(ctx, room)
-	closet := &cobot.Closet{RoomID: room.ID, Summary: "Important fact about testing"}
+	closet := &Closet{RoomID: room.ID, Summary: "Important fact about testing"}
 	s.CreateCloset(ctx, closet)
 
 	result, err := s.WakeUp(ctx)
@@ -65,9 +63,9 @@ func TestWakeUpWithRoomContext(t *testing.T) {
 
 	ctx := context.Background()
 
-	wing := &cobot.Wing{Name: "myproject"}
+	wing := &Wing{Name: "myproject"}
 	s.CreateWing(ctx, wing)
-	room := &cobot.Room{WingID: wing.ID, Name: "notes", HallType: "log"}
+	room := &Room{WingID: wing.ID, Name: "notes", HallType: "log"}
 	s.CreateRoom(ctx, room)
 
 	_, err = s.Store(ctx, "First note about the project", wing.ID, room.ID)
@@ -99,12 +97,12 @@ func TestWakeUpIgnoresNonFactsInFactsSection(t *testing.T) {
 	defer s.Close()
 
 	ctx := context.Background()
-	wing := &cobot.Wing{Name: "proj", Type: "project"}
+	wing := &Wing{Name: "proj", Type: "project"}
 	s.CreateWing(ctx, wing)
-	room := &cobot.Room{WingID: wing.ID, Name: "log-room", HallType: "log"}
+	room := &Room{WingID: wing.ID, Name: "log-room", HallType: "log"}
 	s.CreateRoom(ctx, room)
 
-	closet := &cobot.Closet{
+	closet := &Closet{
 		RoomID:  room.ID,
 		Summary: "this should not appear in Known Facts",
 	}
@@ -129,9 +127,9 @@ func TestWakeUpWithDeepSearch(t *testing.T) {
 
 	ctx := context.Background()
 
-	wing := &cobot.Wing{Name: "myproject"}
+	wing := &Wing{Name: "myproject"}
 	s.CreateWing(ctx, wing)
-	room := &cobot.Room{WingID: wing.ID, Name: "notes", HallType: "log"}
+	room := &Room{WingID: wing.ID, Name: "notes", HallType: "log"}
 	s.CreateRoom(ctx, room)
 
 	_, err = s.Store(ctx, "Important decision made about the architecture", wing.ID, room.ID)

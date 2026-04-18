@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cobot-agent/cobot/internal/sandbox"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -252,5 +253,119 @@ func TestWorkspace_ExternalAgent(t *testing.T) {
 	cfg.Command = "cmd1-modified"
 	if ws.Config.ExternalAgents[0].Command != "cmd1-modified" {
 		t.Error("modifying returned config did not affect original")
+	}
+}
+
+func TestEffectiveSandbox_FallbackToWorkspaceRoot(t *testing.T) {
+	// When no explicit sandbox.root is set, EffectiveSandbox should fall back
+	// to the workspace config root so that filesystem tools resolve relative
+	// paths inside the workspace directory instead of the process CWD.
+	ws := &Workspace{
+		Definition: &WorkspaceDefinition{
+			Name: "myproject",
+			Type: WorkspaceTypeProject,
+			Root: "/project/root",
+		},
+		Config: &WorkspaceConfig{
+			Name: "myproject",
+			Type: WorkspaceTypeProject,
+			Root: "/project/root",
+		},
+	}
+
+	sandbox := ws.EffectiveSandbox(nil)
+	if sandbox.Root != "/project/root" {
+		t.Errorf("sandbox.Root = %q, want /project/root", sandbox.Root)
+	}
+	if sandbox.VirtualRoot == "" {
+		t.Error("sandbox.VirtualRoot should not be empty when Root is set")
+	}
+}
+
+func TestEffectiveSandbox_FallbackToDefinitionRoot(t *testing.T) {
+	// When Config.Root is also empty, fall back to Definition.Root.
+	ws := &Workspace{
+		Definition: &WorkspaceDefinition{
+			Name: "myproject",
+			Type: WorkspaceTypeProject,
+			Root: "/def/root",
+		},
+		Config: &WorkspaceConfig{
+			Name: "myproject",
+			Type: WorkspaceTypeProject,
+		},
+	}
+
+	sandbox := ws.EffectiveSandbox(nil)
+	if sandbox.Root != "/def/root" {
+		t.Errorf("sandbox.Root = %q, want /def/root", sandbox.Root)
+	}
+}
+
+func TestEffectiveSandbox_ExplicitRootWins(t *testing.T) {
+	// An explicit sandbox root should take priority over workspace roots.
+	ws := &Workspace{
+		Definition: &WorkspaceDefinition{
+			Name: "myproject",
+			Type: WorkspaceTypeProject,
+			Root: "/project/root",
+		},
+		Config: &WorkspaceConfig{
+			Name: "myproject",
+			Type: WorkspaceTypeProject,
+			Root: "/project/root",
+			Sandbox: sandbox.SandboxConfig{
+				Root: "/explicit/sandbox",
+			},
+		},
+	}
+
+	sandbox := ws.EffectiveSandbox(nil)
+	if sandbox.Root != "/explicit/sandbox" {
+		t.Errorf("sandbox.Root = %q, want /explicit/sandbox", sandbox.Root)
+	}
+}
+
+func TestEffectiveSandbox_AgentOverrideWins(t *testing.T) {
+	// Agent-level sandbox root should override everything.
+	ws := &Workspace{
+		Definition: &WorkspaceDefinition{
+			Name: "myproject",
+			Type: WorkspaceTypeProject,
+			Root: "/project/root",
+		},
+		Config: &WorkspaceConfig{
+			Name: "myproject",
+			Type: WorkspaceTypeProject,
+			Root: "/project/root",
+		},
+	}
+
+	agentSandbox := &sandbox.SandboxConfig{Root: "/agent/root"}
+	sandbox := ws.EffectiveSandbox(agentSandbox)
+	if sandbox.Root != "/agent/root" {
+		t.Errorf("sandbox.Root = %q, want /agent/root", sandbox.Root)
+	}
+}
+
+func TestEffectiveSandbox_NoRootAtAll(t *testing.T) {
+	// Default workspace with no root anywhere — sandbox should be inactive.
+	ws := &Workspace{
+		Definition: &WorkspaceDefinition{
+			Name: "default",
+			Type: WorkspaceTypeDefault,
+		},
+		Config: &WorkspaceConfig{
+			Name: "default",
+			Type: WorkspaceTypeDefault,
+		},
+	}
+
+	sandbox := ws.EffectiveSandbox(nil)
+	if sandbox.Root != "" {
+		t.Errorf("sandbox.Root = %q, want empty", sandbox.Root)
+	}
+	if sandbox.VirtualRoot != "" {
+		t.Errorf("sandbox.VirtualRoot = %q, want empty", sandbox.VirtualRoot)
 	}
 }

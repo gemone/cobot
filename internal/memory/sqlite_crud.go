@@ -6,13 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
-
-	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
 // --- Wings ---
 
-func (s *Store) CreateWing(ctx context.Context, wing *cobot.Wing) error {
+func (s *Store) CreateWing(ctx context.Context, wing *Wing) error {
 	if wing.ID == "" {
 		wing.ID = newID()
 	}
@@ -24,12 +22,12 @@ func (s *Store) CreateWing(ctx context.Context, wing *cobot.Wing) error {
 	return err
 }
 
-func (s *Store) GetWing(ctx context.Context, id string) (*cobot.Wing, error) {
+func (s *Store) GetWing(ctx context.Context, id string) (*Wing, error) {
 	row := s.db.QueryRowContext(ctx, sqlSelectWing, id)
 	return scanWing(row)
 }
 
-func (s *Store) GetWingByName(ctx context.Context, name string) (*cobot.Wing, error) {
+func (s *Store) GetWingByName(ctx context.Context, name string) (*Wing, error) {
 	row := s.db.QueryRowContext(ctx, sqlSelectWingByName, name)
 	w, err := scanWing(row)
 	if err == sql.ErrNoRows {
@@ -38,14 +36,14 @@ func (s *Store) GetWingByName(ctx context.Context, name string) (*cobot.Wing, er
 	return w, err
 }
 
-func (s *Store) GetWings(ctx context.Context) ([]*cobot.Wing, error) {
+func (s *Store) GetWings(ctx context.Context) ([]*Wing, error) {
 	rows, err := s.db.QueryContext(ctx, sqlSelectWings)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var wings []*cobot.Wing
+	var wings []*Wing
 	for rows.Next() {
 		w, err := scanWing(rows)
 		if err != nil {
@@ -64,7 +62,7 @@ func (s *Store) CreateWingIfNotExists(ctx context.Context, name string) (string,
 	if existing != nil {
 		return existing.ID, nil
 	}
-	wing := &cobot.Wing{ID: newID(), Name: name}
+	wing := &Wing{ID: newID(), Name: name}
 	if err := s.CreateWing(ctx, wing); err != nil {
 		return "", err
 	}
@@ -73,7 +71,7 @@ func (s *Store) CreateWingIfNotExists(ctx context.Context, name string) (string,
 
 // --- Rooms ---
 
-func (s *Store) CreateRoom(ctx context.Context, room *cobot.Room) error {
+func (s *Store) CreateRoom(ctx context.Context, room *Room) error {
 	if room.ID == "" {
 		room.ID = newID()
 	}
@@ -81,16 +79,16 @@ func (s *Store) CreateRoom(ctx context.Context, room *cobot.Room) error {
 	return err
 }
 
-func (s *Store) GetRooms(ctx context.Context, wingID string) ([]*cobot.Room, error) {
+func (s *Store) GetRooms(ctx context.Context, wingID string) ([]*Room, error) {
 	rows, err := s.db.QueryContext(ctx, sqlSelectRooms, wingID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var rooms []*cobot.Room
+	var rooms []*Room
 	for rows.Next() {
-		var r cobot.Room
+		var r Room
 		if err := rows.Scan(&r.ID, &r.WingID, &r.Name, &r.HallType); err != nil {
 			return nil, err
 		}
@@ -99,8 +97,8 @@ func (s *Store) GetRooms(ctx context.Context, wingID string) ([]*cobot.Room, err
 	return rooms, rows.Err()
 }
 
-func (s *Store) GetRoom(ctx context.Context, wingID, roomID string) (*cobot.Room, error) {
-	var r cobot.Room
+func (s *Store) GetRoom(ctx context.Context, wingID, roomID string) (*Room, error) {
+	var r Room
 	err := s.db.QueryRowContext(ctx, sqlSelectRoom, roomID, wingID).
 		Scan(&r.ID, &r.WingID, &r.Name, &r.HallType)
 	if err != nil {
@@ -109,8 +107,8 @@ func (s *Store) GetRoom(ctx context.Context, wingID, roomID string) (*cobot.Room
 	return &r, nil
 }
 
-func (s *Store) GetRoomByName(ctx context.Context, wingID, name string) (*cobot.Room, error) {
-	var r cobot.Room
+func (s *Store) GetRoomByName(ctx context.Context, wingID, name string) (*Room, error) {
+	var r Room
 	err := s.db.QueryRowContext(ctx, sqlSelectRoomByName, wingID, name).
 		Scan(&r.ID, &r.WingID, &r.Name, &r.HallType)
 	if err == sql.ErrNoRows {
@@ -130,7 +128,7 @@ func (s *Store) CreateRoomIfNotExists(ctx context.Context, wingID, name, hallTyp
 	if existing != nil {
 		return existing.ID, nil
 	}
-	room := &cobot.Room{ID: newID(), WingID: wingID, Name: name, HallType: hallType}
+	room := &Room{ID: newID(), WingID: wingID, Name: name, HallType: hallType}
 	if err := s.CreateRoom(ctx, room); err != nil {
 		return "", err
 	}
@@ -155,7 +153,7 @@ func (s *Store) DeleteDrawer(ctx context.Context, id string) error {
 
 // --- Closets ---
 
-func (s *Store) CreateCloset(ctx context.Context, closet *cobot.Closet) error {
+func (s *Store) CreateCloset(ctx context.Context, closet *Closet) error {
 	if closet.ID == "" {
 		closet.ID = newID()
 	}
@@ -181,7 +179,7 @@ func (s *Store) CreateCloset(ctx context.Context, closet *cobot.Closet) error {
 	return tx.Commit()
 }
 
-func (s *Store) GetClosets(ctx context.Context, roomID string) ([]*cobot.Closet, error) {
+func (s *Store) GetClosets(ctx context.Context, roomID string) ([]*Closet, error) {
 	rows, err := s.db.QueryContext(ctx, sqlSelectClosets, roomID)
 	if err != nil {
 		return nil, err
@@ -190,9 +188,9 @@ func (s *Store) GetClosets(ctx context.Context, roomID string) ([]*cobot.Closet,
 	// Collect all closets first and close the rows cursor before running
 	// sub-queries. With MaxOpenConns(1), nested queries on the same DB
 	// would deadlock if the outer cursor is still open.
-	var closets []*cobot.Closet
+	var closets []*Closet
 	for rows.Next() {
-		var c cobot.Closet
+		var c Closet
 		if err := rows.Scan(&c.ID, &c.RoomID, &c.Summary); err != nil {
 			rows.Close()
 			return nil, err
@@ -229,8 +227,8 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
-func scanWing(row rowScanner) (*cobot.Wing, error) {
-	var w cobot.Wing
+func scanWing(row rowScanner) (*Wing, error) {
+	var w Wing
 	var kwJSON string
 	if err := row.Scan(&w.ID, &w.Name, &w.Type, &kwJSON); err != nil {
 		return nil, err

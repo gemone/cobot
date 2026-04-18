@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cobot-agent/cobot/internal/sandbox"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -27,7 +28,7 @@ type readFileArgs struct {
 
 type ReadFileTool struct{ BasicTool }
 
-func NewReadFileTool(sandbox *cobot.SandboxConfig) *ReadFileTool {
+func NewReadFileTool(sandbox *sandbox.SandboxConfig) *ReadFileTool {
 	return &ReadFileTool{BasicTool{
 		sandboxTool: sandboxTool{sandbox: sandbox},
 		name:        "filesystem_read",
@@ -41,7 +42,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	if err := decodeArgs(args, &a); err != nil {
 		return "", err
 	}
-	if resolved, err := sandboxResolvePath(t.sandbox, a.Path); err != nil {
+	if resolved, err := sandboxResolvePath(t.sandbox, a.Path, false); err != nil {
 		return "", err
 	} else {
 		a.Path = resolved
@@ -64,7 +65,7 @@ type writeFileArgs struct {
 
 type WriteFileTool struct{ BasicTool }
 
-func NewWriteFileTool(sandbox *cobot.SandboxConfig) *WriteFileTool {
+func NewWriteFileTool(sandbox *sandbox.SandboxConfig) *WriteFileTool {
 	return &WriteFileTool{BasicTool{
 		sandboxTool: sandboxTool{sandbox: sandbox},
 		name:        "filesystem_write",
@@ -78,7 +79,7 @@ func (t *WriteFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if err := decodeArgs(args, &a); err != nil {
 		return "", err
 	}
-	if resolved, err := sandboxResolvePath(t.sandbox, a.Path); err != nil {
+	if resolved, err := sandboxResolvePath(t.sandbox, a.Path, true); err != nil {
 		return "", err
 	} else {
 		a.Path = resolved
@@ -105,7 +106,7 @@ type listDirArgs struct {
 
 type ListDirTool struct{ BasicTool }
 
-func NewListDirTool(sandbox *cobot.SandboxConfig) *ListDirTool {
+func NewListDirTool(sandbox *sandbox.SandboxConfig) *ListDirTool {
 	return &ListDirTool{BasicTool{
 		sandboxTool: sandboxTool{sandbox: sandbox},
 		name:        "filesystem_list",
@@ -119,7 +120,7 @@ func (t *ListDirTool) Execute(ctx context.Context, args json.RawMessage) (string
 	if err := decodeArgs(args, &a); err != nil {
 		return "", err
 	}
-	if resolved, err := sandboxResolvePath(t.sandbox, a.Path); err != nil {
+	if resolved, err := sandboxResolvePath(t.sandbox, a.Path, false); err != nil {
 		return "", err
 	} else {
 		a.Path = resolved
@@ -146,7 +147,7 @@ func (t *ListDirTool) Execute(ctx context.Context, args json.RawMessage) (string
 		}
 		displayName := name
 		if virtualPrefix != "" {
-			displayName = virtualPrefix + "/" + name
+			displayName = sandbox.PathJoinVirtual(virtualPrefix, name)
 		}
 		if entry.IsDir() {
 			lines = append(lines, displayName+"/")
