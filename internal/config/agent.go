@@ -19,6 +19,16 @@ type AgentConfig struct {
 	MaxTurns      int                    `yaml:"max_turns,omitempty"`
 	Sandbox       *sandbox.SandboxConfig `yaml:"sandbox,omitempty"`
 	Session       *cobot.SessionConfig   `yaml:"session,omitempty"`
+
+	// MemoryPromoteInterval controls how often (in turns) the agent triggers
+	// an asynchronous STM→LTM promotion. Zero disables promotion.
+	MemoryPromoteInterval int `yaml:"memory_promote_interval,omitempty"`
+	// MemoryPromoteThreshold is the minimum number of STM items required
+	// before a mid-session promotion is attempted. Zero defaults to 5.
+	MemoryPromoteThreshold int `yaml:"memory_promote_threshold,omitempty"`
+	// SkillSyncInterval is the background LTM→skill sync interval in minutes.
+	// Zero defaults to 60 minutes.
+	SkillSyncInterval int `yaml:"skill_sync_interval,omitempty"`
 }
 
 func LoadAgentConfig(path string) (*AgentConfig, error) {

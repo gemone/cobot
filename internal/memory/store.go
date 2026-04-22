@@ -13,10 +13,12 @@ import (
 // Both LTM (long-term memory) and per-session STM (short-term memory)
 // databases live in the same directory.
 type Store struct {
-	db     *sql.DB            // LTM database
-	stmDir string             // directory for per-session STM DBs
-	stmMu  sync.Mutex         // protects stmDBs map
-	stmDBs map[string]*sql.DB // sessionID → STM DB connection
+	db                  *sql.DB            // LTM database
+	stmDir              string             // directory for per-session STM DBs
+	stmMu               sync.Mutex         // protects stmDBs map
+	stmDBs              map[string]*sql.DB // sessionID → STM DB connection
+	summarizer          *Summarizer        // optional LLM-powered summarizer for STM→LTM
+	stmPromoteThreshold int                // minimum STM items to trigger mid-session promotion
 }
 
 // OpenStore opens a SQLite-backed memory store.
@@ -53,6 +55,17 @@ func (s *Store) Close() error {
 		}
 	}
 	return firstErr
+}
+
+// SetSummarizer sets the LLM-powered summarizer for smart STM→LTM promotion.
+func (s *Store) SetSummarizer(summarizer *Summarizer) {
+	s.summarizer = summarizer
+}
+
+// SetSTMPromoteThreshold sets the minimum number of STM items required
+// before a mid-session promotion is attempted. Zero defaults to 5.
+func (s *Store) SetSTMPromoteThreshold(threshold int) {
+	s.stmPromoteThreshold = threshold
 }
 
 // Store adds content to a room's drawers and indexes it for full-text search.

@@ -111,7 +111,7 @@ func TestResolveLinkedFile(t *testing.T) {
 
 // --- executeManage (CRUD) ---
 
-func TestExecuteManage_CreateAndRead(t *testing.T) {
+func TestExecuteManage_Create(t *testing.T) {
 	h := newTestSkillsHandler(t)
 	content := skillContent("test-skill", "A test skill", "Hello world")
 

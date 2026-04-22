@@ -90,6 +90,10 @@ func (sm *SessionManager) PersistUsage() {
 	}
 }
 
+func (sm *SessionManager) SetSTMPromoteInterval(interval int) {
+	sm.stmPromoteInterval = interval
+}
+
 func (sm *SessionManager) SetMemoryStore(s cobot.MemoryStore) {
 	sm.memoryStore = s
 }

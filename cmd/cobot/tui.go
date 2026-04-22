@@ -6,8 +6,10 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"charm.land/bubbles/v2/key"
@@ -394,11 +396,16 @@ var tuiCmd = &cobra.Command{
 		mdl.notificationCh = notifyCh
 		mdl.tuiChDone = tuiCh.Done()
 
-		p := tea.NewProgram(
-			mdl,
-			tea.WithContext(context.Background()),
-		)
-		_, err = p.Run()
+		// Create a context that cancels on OS signals so Bubble Tea exits gracefully.
+		programCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+		defer stop()
+
+		// Run the tea program
+		p := tea.NewProgram(mdl, tea.WithContext(programCtx))
+
+		// Run program (blocks until exit)
+		finalModel, err := p.Run()
+		_ = finalModel // unused but kept for future use
 		return err
 	},
 }

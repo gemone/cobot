@@ -55,6 +55,24 @@ func stmRoomForCategory(category string) string {
 	}
 }
 
+// stmCategoryForRoom maps an STM room name to an item category.
+func stmCategoryForRoom(roomName string) string {
+	switch roomName {
+	case stmRoomContext:
+		return "context"
+	case stmRoomTodo:
+		return "todo"
+	case stmRoomNotes:
+		return "notes"
+	case stmRoomObservation:
+		return "observation"
+	case stmRoomCompressed:
+		return "compressed"
+	default:
+		return "context"
+	}
+}
+
 // getSTMDB returns (or creates) the per-session STM database.
 func (s *Store) getSTMDB(sessionID string) (*sql.DB, error) {
 	s.stmMu.Lock()
@@ -183,8 +201,19 @@ func (s *Store) ClearShortTerm(ctx context.Context, sessionID string) error {
 
 // PromoteToLongTerm moves valuable short-term items to long-term memory
 // under the "sessions" wing, then deletes the STM database.
+//
+// Architecture: smart summarization (LLM extraction) → insights stored in
+// LTM rooms (facts/patterns). A raw dumb-copy backup to "sessions/facts"
+// always runs as a secondary pass — this is intentional (not a fallback) to
+// preserve full fidelity for auditability even when the summarizer succeeds.
+// If LLM summarization fails, the raw copy is the primary path.
 func (s *Store) PromoteToLongTerm(ctx context.Context, sessionID string) error {
-	drawers, err := s.RecallShortTerm(ctx, sessionID)
+	stmDB, err := s.getSTMDB(sessionID)
+	if err != nil {
+		return err
+	}
+
+	drawers, items, err := s.recallShortTermWithCategories(ctx, sessionID)
 	if err != nil {
 		return err
 	}
@@ -192,6 +221,19 @@ func (s *Store) PromoteToLongTerm(ctx context.Context, sessionID string) error {
 		return nil
 	}
 
+	// Try smart summarization first.
+	if s.summarizer != nil && len(items) > 0 {
+		compressedSummary := s.readCompressedSummary(ctx, stmDB)
+		insights, err := s.summarizer.Summarize(ctx, items, compressedSummary)
+		if err != nil {
+			slog.Debug("session summarization failed, falling back to dumb copy", "error", err)
+		}
+		if len(insights) > 0 {
+			s.storeInsights(ctx, insights)
+		}
+	}
+
+	// Always do a dumb copy backup of raw items to facts.
 	rooms := make(map[string]struct{})
 	for _, d := range drawers {
 		roomName := "facts"
@@ -288,6 +330,7 @@ func (s *Store) SummarizeAndPromoteSTM(ctx context.Context, sessionID string) er
 	}
 
 	var allDrawers []*Drawer
+	var allItems []STMItem
 	var roomIDsToClear []string
 
 	for _, room := range rooms {
@@ -305,36 +348,147 @@ func (s *Store) SummarizeAndPromoteSTM(ctx context.Context, sessionID string) er
 				continue
 			}
 			allDrawers = append(allDrawers, &d)
+			allItems = append(allItems, STMItem{
+				Content:  d.Content,
+				Category: stmCategoryForRoom(room.Name),
+			})
 		}
 		dRows.Close()
 		roomIDsToClear = append(roomIDsToClear, room.ID)
 	}
 
-	if len(allDrawers) < 5 {
+	if len(allDrawers) < s.stmPromoteThreshold || s.stmPromoteThreshold == 0 && len(allDrawers) < 5 {
 		return nil
 	}
 
-	// Promote items to LTM.
-	ltmRooms := make(map[string]struct{})
-	for _, d := range allDrawers {
-		_, err := s.StoreByName(ctx, d.Content, "sessions", "facts", cobot.TagFacts)
+	// Try smart summarization first.
+	var insightsStored int
+	if s.summarizer != nil && len(allItems) > 0 {
+		insights, err := s.summarizer.Summarize(ctx, allItems, "")
 		if err != nil {
-			continue
+			slog.Debug("STM summarization failed, falling back to dumb copy", "error", err)
 		}
-		ltmRooms["facts"] = struct{}{}
+		if len(insights) > 0 {
+			insightsStored = s.storeInsights(ctx, insights)
+		} else {
+			// Fallback to dumb copy if summarizer returned empty.
+			s.dumbCopyToFacts(ctx, allDrawers)
+		}
+	} else {
+		// No summarizer configured — dumb copy.
+		s.dumbCopyToFacts(ctx, allDrawers)
 	}
 
 	// Consolidate promoted LTM rooms.
-	for room := range ltmRooms {
-		_ = s.ConsolidateByName(ctx, "sessions", room)
-	}
+	_ = s.ConsolidateByName(ctx, "sessions", "facts")
+	_ = s.ConsolidateByName(ctx, "sessions", "patterns")
 
-	// Delete promoted items from STM (clear drawers in each promoted room).
-	for _, roomID := range roomIDsToClear {
-		if _, err := stmDB.ExecContext(ctx, "DELETE FROM drawers WHERE room_id = ?", roomID); err != nil {
-			slog.Error("failed to clear promoted STM drawers", "room_id", roomID, "error", err)
+	// Only clear STM if at least one insight was successfully persisted.
+	// This prevents data loss when storeInsights partially fails.
+	if insightsStored > 0 {
+		for _, roomID := range roomIDsToClear {
+			if _, err := stmDB.ExecContext(ctx, "DELETE FROM drawers WHERE room_id = ?", roomID); err != nil {
+				slog.Error("failed to clear promoted STM drawers", "room_id", roomID, "error", err)
+			}
 		}
 	}
 
 	return nil
+}
+
+// recallShortTermWithCategories returns all drawers and their corresponding
+// STMItems for the given session.
+func (s *Store) recallShortTermWithCategories(ctx context.Context, sessionID string) ([]*Drawer, []STMItem, error) {
+	stmDB, err := s.getSTMDB(sessionID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	wingID, err := getSTMWingID(ctx, stmDB)
+	if err != nil || wingID == "" {
+		return nil, nil, nil
+	}
+
+	rooms, err := getSTMRooms(ctx, stmDB, wingID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var drawers []*Drawer
+	var items []STMItem
+	for _, room := range rooms {
+		dRows, err := stmDB.QueryContext(ctx, sqlSelectDrawersByRoomOrdered, room.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		for dRows.Next() {
+			var d Drawer
+			if err := dRows.Scan(&d.ID, &d.RoomID, &d.Content, &d.CreatedAt); err != nil {
+				dRows.Close()
+				return nil, nil, err
+			}
+			drawers = append(drawers, &d)
+			items = append(items, STMItem{
+				Content:  d.Content,
+				Category: stmCategoryForRoom(room.Name),
+			})
+		}
+		dRows.Close()
+		if err := dRows.Err(); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	return drawers, items, nil
+}
+
+// readCompressedSummary reads the latest compressed session summary from STM.
+func (s *Store) readCompressedSummary(ctx context.Context, stmDB *sql.DB) string {
+	wingID, err := getSTMWingID(ctx, stmDB)
+	if err != nil || wingID == "" {
+		return ""
+	}
+
+	var roomID string
+	var r Room
+	rRow := stmDB.QueryRowContext(ctx, sqlSelectRoomByName, wingID, stmRoomCompressed)
+	if err := rRow.Scan(&r.ID, &r.WingID, &r.Name, &r.HallType); err != nil {
+		return ""
+	}
+	roomID = r.ID
+
+	row := stmDB.QueryRowContext(ctx, sqlSelectDrawersByRoomOrdered+" LIMIT 1", roomID)
+	var d Drawer
+	if err := row.Scan(&d.ID, &d.RoomID, &d.Content, &d.CreatedAt); err != nil {
+		return ""
+	}
+	return d.Content
+}
+
+// storeInsights stores extracted insights into the appropriate LTM rooms.
+// storeInsights writes each insight to the appropriate LTM room. It returns
+// the number of insights that were successfully persisted so the caller can
+// decide whether it's safe to clear STM.
+func (s *Store) storeInsights(ctx context.Context, insights []Insight) int {
+	stored := 0
+	for _, insight := range insights {
+		roomName, hallType := insightRoomMapping(insight.Category)
+		_, err := s.StoreByName(ctx, insight.Content, "sessions", roomName, hallType)
+		if err != nil {
+			slog.Debug("failed to store insight", "category", insight.Category, "error", err)
+			continue
+		}
+		stored++
+	}
+	return stored
+}
+
+// dumbCopyToFacts copies raw drawers directly to the "facts" room.
+func (s *Store) dumbCopyToFacts(ctx context.Context, drawers []*Drawer) {
+	for _, d := range drawers {
+		_, err := s.StoreByName(ctx, d.Content, "sessions", "facts", cobot.TagFacts)
+		if err != nil {
+			slog.Debug("dumb copy to facts failed", "error", err)
+		}
+	}
 }
