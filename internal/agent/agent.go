@@ -72,10 +72,11 @@ type Agent struct {
 	tools      cobot.ToolRegistry
 	compressor *Compressor
 
-	streamMu   sync.Mutex // serializes concurrent Stream calls
-	streamWg   sync.WaitGroup
-	bgWg       sync.WaitGroup // tracks background goroutines (STM promotion, extraction)
-	compressMu sync.Mutex     // prevents concurrent compression runs
+	streamMu     sync.Mutex // serializes concurrent Stream calls
+	streamWg     sync.WaitGroup
+	bgWg         sync.WaitGroup // tracks background goroutines (STM promotion, extraction)
+	compressMu   sync.Mutex     // prevents concurrent compression runs
+	stmPromoteMu sync.Mutex     // prevents concurrent STM promotions
 
 	agentCtx      context.Context
 	agentCancel   context.CancelFunc
@@ -271,7 +272,7 @@ func (a *Agent) Close() error {
 	sm := a.sessionMgr
 	if sm.memoryStore != nil {
 		if stm, ok := sm.memoryStore.(cobot.ShortTermMemory); ok {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			_ = stm.PromoteToLongTerm(ctx, sm.sessionID)
 			_ = stm.ClearShortTerm(ctx, sm.sessionID)
 			cancel()

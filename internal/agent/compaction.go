@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/cobot-agent/cobot/internal/memory"
 	cobot "github.com/cobot-agent/cobot/pkg"
@@ -36,10 +37,22 @@ func (a *Agent) promoteSTMBackground(ctx context.Context) {
 	if !ok {
 		return
 	}
+	// Prevent concurrent promotions for the same session.
+	if !a.stmPromoteMu.TryLock() {
+		slog.Debug("STM promotion already in progress, skipping")
+		return
+	}
+	defer a.stmPromoteMu.Unlock()
+
 	a.bgWg.Add(1)
 	go func() {
 		defer a.bgWg.Done()
-		if err := stm.SummarizeAndPromoteSTM(ctx, sm.sessionID); err != nil {
+		// Use agent-level context with its own timeout, NOT the request ctx.
+		// The request ctx is cancelled when finishStream() is called.
+		// agentCtx lives for the lifetime of the Agent.
+		promoCtx, cancel := context.WithTimeout(a.agentCtx, 2*time.Minute)
+		defer cancel()
+		if err := stm.SummarizeAndPromoteSTM(promoCtx, sm.sessionID); err != nil {
 			slog.Debug("periodic STM promotion failed", "err", err)
 		}
 	}()
