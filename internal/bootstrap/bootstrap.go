@@ -74,6 +74,10 @@ func InitAgent(cfg *cobot.Config, requireProvider bool) (*Result, error) {
 
 	sm := a.SessionMgr()
 
+	if agentCfg != nil {
+		sm.SetSTMPromoteInterval(agentCfg.MemoryPromoteInterval)
+	}
+
 	if agentCfg != nil && agentCfg.Session != nil {
 		sc := cfg.Session
 		if agentCfg.Session.SummarizeThreshold > 0 {
@@ -134,11 +138,15 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 
 	configureSystemPrompt(agentCfg, sm, ws)
 	configureSkills(agentCfg, sm, ws)
-	store := configureMemory(sm, ws)
+	store := configureMemory(sm, ws, a.Provider(), a.Model())
+	if store != nil && agentCfg != nil && agentCfg.MemoryPromoteThreshold > 0 {
+		store.SetSTMPromoteThreshold(agentCfg.MemoryPromoteThreshold)
+	}
 	sandbox := configureSandboxTools(a, ws, agentCfg, sm)
 	configureMemoryTools(a, store, sandbox)
 	configureDelegateTool(a, ws, registry, sandbox)
 	configureCronTool(a, ws, registry)
+	configureSkillSyncer(a, store, ws, agentCfg)
 
 	return nil
 }
@@ -236,7 +244,7 @@ func insideCodeBlock(text string) bool {
 	return inBlock
 }
 
-func configureMemory(sm *agent.SessionManager, ws *workspace.Workspace) *memory.Store {
+func configureMemory(sm *agent.SessionManager, ws *workspace.Workspace, provider cobot.Provider, model string) *memory.Store {
 	if old := sm.MemoryStore(); old != nil {
 		if err := old.Close(); err != nil {
 			slog.Warn("failed to close memory store", "err", err)
@@ -246,6 +254,10 @@ func configureMemory(sm *agent.SessionManager, ws *workspace.Workspace) *memory.
 	if err != nil {
 		slog.Warn("failed to open memory store", "err", err)
 		return nil
+	}
+	if provider != nil && model != "" {
+		summarizer := memory.NewSummarizer(provider, model)
+		store.SetSummarizer(summarizer)
 	}
 	sm.SetMemoryStore(store)
 	sm.SetMemoryRecall(store)
@@ -340,6 +352,20 @@ func configureCronTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.M
 			return ""
 		}),
 	))
+}
+
+func configureSkillSyncer(a *agent.Agent, store *memory.Store, ws *workspace.Workspace, agentCfg *config.AgentConfig) {
+	if store == nil || a.Provider() == nil || a.Model() == "" {
+		return
+	}
+	interval := 1 * time.Hour
+	if agentCfg != nil && agentCfg.SkillSyncInterval > 0 {
+		interval = time.Duration(agentCfg.SkillSyncInterval) * time.Minute
+	}
+	analyzer := memory.NewWorkflowAnalyzer(store, a.Provider(), a.Model(), ws.SkillsDir())
+	syncer := agent.NewBackgroundSkillSyncer(analyzer, interval)
+	a.SetSkillSyncer(syncer)
+	syncer.Start()
 }
 
 // --- private helpers (moved from cmd/cobot/helpers.go) ---

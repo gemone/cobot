@@ -82,6 +82,7 @@ type Agent struct {
 	cronScheduler CronScheduler
 	channelMgr    *channel.Manager
 	broker        broker.Broker
+	skillSyncer   *BackgroundSkillSyncer
 }
 
 // CronScheduler is a minimal interface for stopping the cron scheduler.
@@ -155,6 +156,11 @@ func (a *Agent) ChannelManager() *channel.Manager {
 func (a *Agent) SetBroker(b broker.Broker) {
 	a.closeBroker()
 	a.broker = b
+}
+
+// SetSkillSyncer sets the background skill syncer.
+func (a *Agent) SetSkillSyncer(s *BackgroundSkillSyncer) {
+	a.skillSyncer = s
 }
 
 // closeBroker safely closes the current broker, logging any error.
@@ -246,6 +252,11 @@ func (a *Agent) Close() error {
 	case <-done:
 	case <-time.After(30 * time.Second):
 		// Force proceed after timeout rather than blocking indefinitely.
+	}
+
+	// Stop skill syncer if running.
+	if a.skillSyncer != nil {
+		a.skillSyncer.Stop()
 	}
 
 	// Stop cron scheduler if running.
