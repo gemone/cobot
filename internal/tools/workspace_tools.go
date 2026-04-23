@@ -89,6 +89,9 @@ func (t *WorkspaceConfigUpdateTool) Execute(ctx context.Context, args json.RawMe
 		cfg.Sandbox.ReadonlyPaths = *params.ReadonlyPaths
 	}
 	if params.AllowNetwork != nil {
+		if t.sandbox != nil {
+			return "", fmt.Errorf("cannot modify allow_network while sandbox is active")
+		}
 		cfg.Sandbox.SetAllowNetwork(*params.AllowNetwork)
 	}
 	if params.BlockedCommands != nil {

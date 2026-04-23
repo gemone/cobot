@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -638,7 +639,12 @@ func TestShellExecTool_TeeAppendUsesEffectiveDir(t *testing.T) {
 		WithShellWorkdir(root),
 		WithShellSandboxConfig(cfg),
 	)
-	args, _ := json.Marshal(map[string]any{"command": "printf 'second\\n' | tee -a tee_out.txt", "dir": "subdir"})
+	// Use OS-agnostic command: avoid single quotes which cmd doesn't strip.
+	cmdStr := `printf "second\n" | tee -a tee_out.txt`
+	if runtime.GOOS == "windows" {
+		cmdStr = `echo second | tee -a tee_out.txt`
+	}
+	args, _ := json.Marshal(map[string]any{"command": cmdStr, "dir": "subdir"})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
 		t.Fatalf("tee -a relative write should be allowed, got: %v", err)
@@ -650,7 +656,11 @@ func TestShellExecTool_TeeAppendUsesEffectiveDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tee output file should exist: %v", err)
 	}
-	if string(data) != "first\nsecond\n" {
+	// Normalize line endings and trim trailing whitespace for cross-platform comparison.
+	// On Windows, echo adds a trailing space; TrimSpace handles both CRLF and trailing spaces.
+	got := strings.TrimSpace(strings.ReplaceAll(string(data), "\r\n", "\n"))
+	want := "first\nsecond"
+	if got != want {
 		t.Fatalf("tee append file content mismatch, got: %q", string(data))
 	}
 }
@@ -666,7 +676,9 @@ func TestShellExecTool_DirOutsideSandboxRejected(t *testing.T) {
 
 	tool := NewShellExecTool(WithShellSandboxConfig(cfg))
 	// Trying to set Dir to outside the sandbox should be rejected.
-	args, _ := json.Marshal(map[string]any{"command": "pwd", "dir": "/tmp/outside"})
+	// Use a path that does NOT start with the virtual root, so AutoResolvePath
+	// cannot map it into the sandbox.
+	args, _ := json.Marshal(map[string]any{"command": "pwd", "dir": "/outside_sandbox"})
 	_, err := tool.Execute(context.Background(), args)
 	if err == nil {
 		t.Error("dir outside sandbox should be rejected")
