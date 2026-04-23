@@ -53,7 +53,8 @@ var networkCommands = []string{
 
 func NewShellExecTool(opts ...ShellExecToolOption) *ShellExecTool {
 	t := &ShellExecTool{
-		timeout: defaultShellTimeout,
+		launcher: sandbox.NewLauncher(),
+		timeout:  defaultShellTimeout,
 	}
 	for _, opt := range opts {
 		opt(t)
