@@ -280,7 +280,7 @@ func configureMemory(sm *agent.SessionManager, ws *workspace.Workspace, provider
 			slog.Warn("failed to close memory store", "err", err)
 		}
 	}
-	store, err := memory.OpenStore(ws.DataDir, ws.SessionsDir())
+	store, err := memory.OpenStore(ws.MemoryDir(), ws.SessionsDir())
 	if err != nil {
 		slog.Warn("failed to open memory store", "err", err)
 		return nil

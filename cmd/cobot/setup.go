@@ -71,7 +71,7 @@ var setupCmd = &cobra.Command{
 		fmt.Printf("Workspace: %s (%s)\n", ws.Config.Name, ws.Config.ID[:8])
 		fmt.Printf("SOUL:   %s\n", ws.GetSoulPath())
 		fmt.Printf("USER:   %s\n", ws.GetUserPath())
-		fmt.Printf("MEMORY: %s\n", filepath.Join(ws.DataDir, "memory.db"))
+		fmt.Printf("MEMORY: %s\n", ws.GetMemoryDBPath())
 		fmt.Printf("Space:  %s\n", ws.SpaceDir())
 		fmt.Printf("MCP:    %s\n", ws.MCPDir())
 		fmt.Println()

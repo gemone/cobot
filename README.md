@@ -40,7 +40,8 @@ Cobot is a multi-workspace AI agent framework with isolated per-workspace memory
     ├── SOUL.md                      # Workspace persona prompt
     ├── USER.md                      # User profile / preferences
     ├── MEMORY.md                    # Optional human-authored notes alongside structured memory
-    ├── memory.db                    # Long-term memory SQLite database
+    ├── memory/
+    │   └── memory.db            # Long-term memory SQLite database
     ├── agents/
     │   └── <agent-name>.yaml        # Per-agent config (model, prompt, skills, session overrides)
     ├── skills/                      # Workspace-private skills
@@ -84,7 +85,7 @@ Startup flow for `cobot chat` and the TUI is:
 4. Initialize the model registry and active provider.
 5. Register sandboxed filesystem/shell tools, workspace tools, memory tools, delegate tooling, and cron.
 6. Load enabled skills and merge them into the effective system prompt.
-7. Open workspace memory (`memory.db`) plus per-session STM storage under `sessions/`.
+7. Open workspace memory (`memory/memory.db`) plus per-session STM storage under `sessions/`.
 
 ## Installation
 

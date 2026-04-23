@@ -90,7 +90,7 @@ var doctorCmd = &cobra.Command{
 		fmt.Printf("\nData directory: %s\n", dataDir)
 		if info, err := os.Stat(dataDir); err == nil && info.IsDir() {
 			fmt.Println("  [OK] Directory exists")
-			memDB := filepath.Join(ws.DataDir, "memory.db")
+			memDB := ws.GetMemoryDBPath()
 			if _, err := os.Stat(memDB); err == nil {
 				fmt.Printf("  [OK] Memory DB: %s\n", memDB)
 			} else {
