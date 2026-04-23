@@ -128,14 +128,6 @@ func (a *Agent) replaceSessionMessages(summary string, kept []cobot.Message, sna
 	newUsage := estimateMessagesUsage(newMsgs)
 	sm.usageTracker.Set(newUsage)
 
-	if sm.sessionStore != nil {
-		sm.sessionStore.AppendCompact(sm.sessionID, CompactMarker{
-			Summary:       summary,
-			OriginalCount: originalCount,
-		})
-		sm.PersistUsage()
-	}
-
 	slog.Debug("session compressed", "original_msgs", originalCount, "new_msgs", len(newMsgs), "new_tokens", newUsage.TotalTokens)
 }
 

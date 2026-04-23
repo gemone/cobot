@@ -15,24 +15,28 @@ import (
 // --- Short-term Memory (STM) ---
 //
 // Each session gets its own SQLite database file ({stmDir}/{sessionID}.db)
-// with a single wing named "session" containing five rooms:
+// with a single wing named "session" containing six rooms:
 //   - "context"     — user directives, task state, decisions
 //   - "todo"        — TODO items tracked during session
 //   - "notes"       — temporary notes, user requirements
-//   - "observation" — tool results, build/test outcomes, error states
+//   - "observation"  — tool results, build/test outcomes, error states
 //   - "compressed"  — compressed session records from compressor
+//   - "history"     — chat message history (preserved indefinitely)
 //
-// The database file is deleted when the session ends (after promoting
-// valuable items to LTM).
+// The database file is NOT deleted when the session ends. Context/todo/notes/
+// observation rooms are promoted to LTM (facts/patterns) during summarization,
+// but history room persists for session recall. The file is only removed when
+// SessionHistoryLimit cleanup prunes old sessions.
 
 const (
 	stmMaxItems = 20
 
 	stmRoomContext     = "context"     // user directives, decisions, task state
-	stmRoomTodo        = "todo"        // TODO items tracked during session
+	stmRoomTodo        = "todo"       // TODO items tracked during session
 	stmRoomNotes       = "notes"       // temporary notes, user requirements
 	stmRoomObservation = "observation" // tool results, build/test outcomes, errors
 	stmRoomCompressed  = "compressed"  // compressed session records from compressor
+	stmRoomHistory     = "history"     // chat message history (preserved across session lifetime)
 
 	stmWingName = "session" // wing name inside each per-session STM DB
 )
@@ -50,6 +54,8 @@ func stmRoomForCategory(category string) string {
 		return stmRoomObservation
 	case "compressed":
 		return stmRoomCompressed
+	case "history":
+		return stmRoomHistory
 	default:
 		return stmRoomContext
 	}
@@ -68,6 +74,8 @@ func stmCategoryForRoom(roomName string) string {
 		return "observation"
 	case stmRoomCompressed:
 		return "compressed"
+	case stmRoomHistory:
+		return "history"
 	default:
 		return "context"
 	}
@@ -200,7 +208,9 @@ func (s *Store) ClearShortTerm(ctx context.Context, sessionID string) error {
 }
 
 // PromoteToLongTerm moves valuable short-term items to long-term memory
-// under the "sessions" wing, then deletes the STM database.
+// under the "sessions" wing. The per-session STM database is NOT deleted —
+// history room is preserved for long-term session recall. Only context/todo/
+// notes/observation are promoted; compressed and history rooms are left intact.
 //
 // Architecture: smart summarization (LLM extraction) → insights stored in
 // LTM rooms (facts/patterns). A raw dumb-copy backup to "sessions/facts"
@@ -249,7 +259,7 @@ func (s *Store) PromoteToLongTerm(ctx context.Context, sessionID string) error {
 		_ = s.ConsolidateByName(ctx, "sessions", room)
 	}
 
-	return s.ClearShortTerm(ctx, sessionID)
+	return nil
 }
 
 // StoreShortTermCompressed stores a compression summary in the STM compressed
@@ -299,9 +309,10 @@ func (s *Store) StoreShortTermCompressed(ctx context.Context, sessionID, content
 }
 
 // SummarizeAndPromoteSTM reads items from context, todo, notes, and observation
-// rooms (NOT compressed) in the per-session STM DB. If total items >= 5, it
-// promotes them to LTM under the "sessions" wing and deletes them from STM.
-// The compressed room is left untouched.
+// rooms (NOT compressed, NOT history) in the per-session STM DB. If total items
+// >= threshold, it promotes them to LTM and clears those rooms from STM.
+// The compressed and history rooms are left untouched.
+// The per-session STM database is NOT deleted — history persists for recall.
 func (s *Store) SummarizeAndPromoteSTM(ctx context.Context, sessionID string) error {
 	stmDB, err := s.getSTMDB(sessionID)
 	if err != nil {

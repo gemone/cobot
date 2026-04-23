@@ -84,6 +84,14 @@ type Agent struct {
 	channelMgr    *channel.Manager
 	broker        broker.Broker
 	skillSyncer   *BackgroundSkillSyncer
+
+	// sessionsDir is the path to the per-session STM databases directory.
+	sessionsDir string
+
+	// archivalStop cancels the long-running session archival goroutine.
+	// Calling ConfigureAgentForWorkspace again (workspace switch) cancels the
+	// previous goroutine before starting a new one, preventing goroutine leaks.
+	archivalStop context.CancelFunc
 }
 
 // CronScheduler is a minimal interface for stopping the cron scheduler.
@@ -162,6 +170,41 @@ func (a *Agent) SetBroker(b broker.Broker) {
 // SetSkillSyncer sets the background skill syncer.
 func (a *Agent) SetSkillSyncer(s *BackgroundSkillSyncer) {
 	a.skillSyncer = s
+}
+
+// SetSessionsDir sets the sessions directory path for session archival.
+func (a *Agent) SetSessionsDir(dir string) {
+	a.sessionsDir = dir
+}
+
+// SessionsDir returns the sessions directory path.
+func (a *Agent) SessionsDir() string {
+	return a.sessionsDir
+}
+
+// SetArchivalStop sets the cancel func for the archival goroutine.
+// Calling ConfigureAgentForWorkspace again replaces the prior archival goroutine.
+func (a *Agent) SetArchivalStop(stop context.CancelFunc) {
+	a.archivalStop = stop
+}
+
+// StopArchival cancels the current archival goroutine, if any.
+// Safe to call even if no archival is running.
+func (a *Agent) StopArchival() {
+	if a.archivalStop != nil {
+		a.archivalStop()
+		a.archivalStop = nil
+	}
+}
+
+// AddBackgroundWork increments the background WaitGroup and returns a function
+// to call when the work is complete. This allows bootstrap code to register
+// long-running goroutines that should be waited on during Close.
+func (a *Agent) AddBackgroundWork() func() {
+	a.bgWg.Add(1)
+	return func() {
+		a.bgWg.Done()
+	}
 }
 
 // closeBroker safely closes the current broker, logging any error.
@@ -274,7 +317,6 @@ func (a *Agent) Close() error {
 		if stm, ok := sm.memoryStore.(cobot.ShortTermMemory); ok {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			_ = stm.PromoteToLongTerm(ctx, sm.sessionID)
-			_ = stm.ClearShortTerm(ctx, sm.sessionID)
 			cancel()
 		}
 		if err := sm.memoryStore.Close(); err != nil {

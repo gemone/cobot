@@ -472,9 +472,9 @@ func TestSTMPromoteToLTM(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Verify STM DB was deleted.
-	if _, err := os.Stat(filepath.Join(dir, "promote-test.db")); !os.IsNotExist(err) {
-		t.Error("STM DB file should be deleted after promotion")
+	// Verify STM DB was NOT deleted (history is preserved after promotion).
+	if _, err := os.Stat(filepath.Join(dir, "promote-test.db")); os.IsNotExist(err) {
+		t.Error("STM DB file should be retained after promotion")
 	}
 
 	// Verify LTM has the promoted items under "sessions" wing.

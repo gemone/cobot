@@ -95,9 +95,6 @@ func InitAgent(cfg *cobot.Config, requireProvider bool) (*Result, error) {
 		sm.SetSessionConfig(sc)
 	}
 
-	sessionStore := agent.NewSessionStore(ws.SessionsDir())
-	sm.SetSessionStore(sessionStore)
-
 	// Create LLM registry for multi-provider model switching.
 	registry := llm.NewRegistry(cfg)
 	a.SetRegistry(registry)
@@ -147,6 +144,39 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	configureDelegateTool(a, ws, registry, sandbox)
 	configureCronTool(a, ws, registry)
 	configureSkillSyncer(a, store, ws, agentCfg)
+
+	// Set sessions dir and start session archival background loop.
+	sessionsDir := ws.SessionsDir()
+	a.SetSessionsDir(sessionsDir)
+	sm.SetSessionsDir(sessionsDir)
+
+	// Cancel any previous archival goroutine from a prior workspace.
+	a.StopArchival()
+
+	retentionDays := 30
+	if agentCfg != nil && agentCfg.SessionRetentionDays > 0 {
+		retentionDays = agentCfg.SessionRetentionDays
+	}
+
+	archivalCtx, archivalCancel := context.WithCancel(context.Background())
+	a.SetArchivalStop(archivalCancel)
+	go func() {
+		defer archivalCancel()
+		// Run once on start, then every retentionDays interval.
+		ticker := time.NewTicker(time.Duration(retentionDays) * 24 * time.Hour)
+		defer ticker.Stop()
+
+		sm.ArchiveInactiveSessions(archivalCtx, retentionDays)
+
+		for {
+			select {
+			case <-archivalCtx.Done():
+				return
+			case <-ticker.C:
+				sm.ArchiveInactiveSessions(archivalCtx, retentionDays)
+			}
+		}
+	}()
 
 	return nil
 }

@@ -11,7 +11,7 @@ import (
 func (a *Agent) buildMessages(ctx context.Context) []cobot.Message {
 	sm := a.sessionMgr
 	msgs := sm.session.Messages()
-	system := sm.getSystemPrompt(ctx)
+	system := sm.GetSystemPrompt()
 	if system == "" {
 		return msgs
 	}

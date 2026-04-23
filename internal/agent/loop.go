@@ -30,7 +30,7 @@ func (a *Agent) executeToolsAndCollect(ctx context.Context, toolCalls []cobot.To
 		a.sessionMgr.AddMessage(cobot.Message{
 			Role:       cobot.RoleTool,
 			ToolResult: tr,
-		}, a.config.Model)
+		})
 	}
 	return results
 }
@@ -43,7 +43,7 @@ func (a *Agent) runLoop(ctx context.Context, prompt, debugLabel string, executeT
 	sm := a.sessionMgr
 	ctx = debuglog.WithSessionID(ctx, sm.SessionID())
 	slog.Debug("session", "event", debugLabel, "prompt", prompt)
-	sm.AddMessage(cobot.Message{Role: cobot.RoleUser, Content: prompt}, a.config.Model)
+	sm.AddMessage(cobot.Message{Role: cobot.RoleUser, Content: prompt})
 
 	// Store initial user message as STM context.
 	a.storeTurnSTM(ctx, prompt, "", nil)
@@ -115,7 +115,7 @@ func (a *Agent) Prompt(ctx context.Context, message string) (*cobot.ProviderResp
 			Role:      cobot.RoleAssistant,
 			Content:   resp.Content,
 			ToolCalls: resp.ToolCalls,
-		}, a.config.Model)
+		})
 
 		if len(resp.ToolCalls) == 0 {
 			// Final response — store STM for this turn.
@@ -206,7 +206,7 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 				}
 				if chunk.Done && len(toolCalls) == 0 {
 					slog.Debug("stream done", "turn", turn, "content_len", len(content))
-					sm.AddMessage(cobot.Message{Role: cobot.RoleAssistant, Content: content}, a.config.Model)
+					sm.AddMessage(cobot.Message{Role: cobot.RoleAssistant, Content: content})
 					turnUsage = estimateTurnUsage(turnUsage, req.Messages, content, nil)
 					sm.usageTracker.Add(turnUsage)
 					sm.PersistUsage()
@@ -219,7 +219,7 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 
 			if len(toolCalls) > 0 {
 				slog.Debug("stream tool calls", "turn", turn, "count", len(toolCalls))
-				sm.AddMessage(cobot.Message{Role: cobot.RoleAssistant, Content: content, ToolCalls: toolCalls}, a.config.Model)
+				sm.AddMessage(cobot.Message{Role: cobot.RoleAssistant, Content: content, ToolCalls: toolCalls})
 				turnUsage = estimateTurnUsage(turnUsage, req.Messages, content, toolCalls)
 				sm.usageTracker.Add(turnUsage)
 				sm.PersistUsage()
@@ -248,7 +248,7 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 						if !sendEvent(evt) {
 							return false, ctx.Err()
 						}
-						sm.AddMessage(cobot.Message{Role: cobot.RoleTool, ToolResult: tr}, a.config.Model)
+						sm.AddMessage(cobot.Message{Role: cobot.RoleTool, ToolResult: tr})
 					}
 				}
 
@@ -263,7 +263,7 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 						if !sendEvent(cobot.Event{Type: cobot.EventToolResult, Content: tr.Error, Error: tr.Error}) {
 							return false, ctx.Err()
 						}
-						sm.AddMessage(cobot.Message{Role: cobot.RoleTool, ToolResult: tr}, a.config.Model)
+						sm.AddMessage(cobot.Message{Role: cobot.RoleTool, ToolResult: tr})
 						continue
 					}
 					st, ok := tool.(cobot.StreamingTool)
@@ -283,7 +283,7 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 						if !sendEvent(resultEvt) {
 							return false, ctx.Err()
 						}
-						sm.AddMessage(cobot.Message{Role: cobot.RoleTool, ToolResult: tr}, a.config.Model)
+						sm.AddMessage(cobot.Message{Role: cobot.RoleTool, ToolResult: tr})
 						continue
 					}
 					output, execErr := st.ExecuteStream(ctx, sc.Arguments, ch)
@@ -302,7 +302,7 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 					if !sendEvent(resultEvt) {
 						return false, ctx.Err()
 					}
-					sm.AddMessage(cobot.Message{Role: cobot.RoleTool, ToolResult: tr}, a.config.Model)
+					sm.AddMessage(cobot.Message{Role: cobot.RoleTool, ToolResult: tr})
 				}
 			}
 
