@@ -118,7 +118,7 @@ func (h *skillsHandler) executeView(ctx context.Context, args json.RawMessage) (
 		if err != nil {
 			skillDir, err = skills.FindSkillDir(workspace.GlobalSkillsDir(), params.Name)
 			if err != nil {
-				return "", errors.New("linked files supported only for SKILL.md format skills")
+				return "", fmt.Errorf("skill %q not found: %w", params.Name, err)
 			}
 		}
 		return skills.ReadLinkedFile(skillDir, params.FilePath)

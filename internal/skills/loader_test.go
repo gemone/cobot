@@ -413,4 +413,18 @@ func TestEnsureContainedDir(t *testing.T) {
 			t.Error("expected error for path traversal")
 		}
 	})
+	t.Run("intermediate symlink escape rejected", func(t *testing.T) {
+		base := t.TempDir()
+		outside := t.TempDir()
+
+		link := filepath.Join(base, "references")
+		if err := os.Symlink(outside, link); err != nil {
+			t.Skipf("symlinks not supported or require elevated privileges: %v", err)
+		}
+
+		target := filepath.Join(link, "sub")
+		if err := EnsureContainedDir(target, base); err == nil {
+			t.Fatal("expected error for intermediate symlink escape")
+		}
+	})
 }

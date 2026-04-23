@@ -169,8 +169,8 @@ func (t *AgentConfigUpdateTool) Execute(ctx context.Context, args json.RawMessag
 	if err := decodeArgs(args, &params); err != nil {
 		return "", err
 	}
-	if err := skills.ValidateSkillName(params.Agent); err != nil {
-		return "", err
+	if params.Agent == "" || !skills.IsPathTraversalSafe(params.Agent) {
+		return "", fmt.Errorf("invalid agent name: %q", params.Agent)
 	}
 
 	path := filepath.Join(t.workspace.AgentsDir(), params.Agent+".yaml")
