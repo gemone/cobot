@@ -150,26 +150,30 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	a.SetSessionsDir(sessionsDir)
 	sm.SetSessionsDir(sessionsDir)
 
+	// Cancel any previous archival goroutine from a prior workspace.
+	a.StopArchival()
+
 	retentionDays := 30
 	if agentCfg != nil && agentCfg.SessionRetentionDays > 0 {
 		retentionDays = agentCfg.SessionRetentionDays
 	}
 
-	done := a.AddBackgroundWork()
+	archivalCtx, archivalCancel := context.WithCancel(context.Background())
+	a.SetArchivalStop(archivalCancel)
 	go func() {
-		defer done()
-		// Run once on start, then every 30 days.
-		ticker := time.NewTicker(30 * 24 * time.Hour)
+		defer archivalCancel()
+		// Run once on start, then every retentionDays interval.
+		ticker := time.NewTicker(time.Duration(retentionDays) * 24 * time.Hour)
 		defer ticker.Stop()
 
-		sm.ArchiveInactiveSessions(a.Context(), retentionDays)
+		sm.ArchiveInactiveSessions(archivalCtx, retentionDays)
 
 		for {
 			select {
-			case <-a.Context().Done():
+			case <-archivalCtx.Done():
 				return
 			case <-ticker.C:
-				sm.ArchiveInactiveSessions(a.Context(), retentionDays)
+				sm.ArchiveInactiveSessions(archivalCtx, retentionDays)
 			}
 		}
 	}()

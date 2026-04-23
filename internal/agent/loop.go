@@ -206,7 +206,7 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 				}
 				if chunk.Done && len(toolCalls) == 0 {
 					slog.Debug("stream done", "turn", turn, "content_len", len(content))
-				sm.AddMessage(cobot.Message{Role: cobot.RoleAssistant, Content: content})
+					sm.AddMessage(cobot.Message{Role: cobot.RoleAssistant, Content: content})
 					turnUsage = estimateTurnUsage(turnUsage, req.Messages, content, nil)
 					sm.usageTracker.Add(turnUsage)
 					sm.PersistUsage()
@@ -219,7 +219,7 @@ func (a *Agent) Stream(ctx context.Context, message string) (<-chan cobot.Event,
 
 			if len(toolCalls) > 0 {
 				slog.Debug("stream tool calls", "turn", turn, "count", len(toolCalls))
-					sm.AddMessage(cobot.Message{Role: cobot.RoleAssistant, Content: content, ToolCalls: toolCalls})
+				sm.AddMessage(cobot.Message{Role: cobot.RoleAssistant, Content: content, ToolCalls: toolCalls})
 				turnUsage = estimateTurnUsage(turnUsage, req.Messages, content, toolCalls)
 				sm.usageTracker.Add(turnUsage)
 				sm.PersistUsage()

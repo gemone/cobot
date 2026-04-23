@@ -234,10 +234,8 @@ func pruneOldSessions(stmDir, currentSessionID string, keepCount int) error {
 	// Delete all but the most recent keepCount.
 	deleteCount := len(files) - keepCount
 	for i := 0; i < deleteCount; i++ {
-		path := filepath.Join(stmDir, files[i].name)
-		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			slog.Warn("failed to remove old session STM file", "path", path, "err", err)
-		}
+		base := strings.TrimSuffix(files[i].name, ".db")
+		deleteSessionFiles(stmDir, base)
 	}
 	return nil
 }
@@ -313,7 +311,7 @@ func (sm *SessionManager) ArchiveInactiveSessions(ctx context.Context, retention
 		}
 
 		// Delete session files: .db, .wal, .shm.
-		sm.deleteSessionFiles(sessionID)
+		deleteSessionFiles(sm.sessionsDir, sessionID)
 	}
 }
 
@@ -321,7 +319,7 @@ func (sm *SessionManager) ArchiveInactiveSessions(ctx context.Context, retention
 // history or context rooms.
 func (sm *SessionManager) sessionHasContent(sessionID string) (bool, error) {
 	dbPath := filepath.Join(sm.sessionsDir, sessionID+".db")
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL")
 	if err != nil {
 		return false, err
 	}
@@ -344,10 +342,10 @@ func (sm *SessionManager) sessionHasContent(sessionID string) (bool, error) {
 }
 
 // deleteSessionFiles removes all files associated with a session (db, wal, shm).
-func (sm *SessionManager) deleteSessionFiles(sessionID string) {
+func deleteSessionFiles(sessionsDir, sessionID string) {
 	exts := []string{".db", ".wal", ".shm"}
 	for _, ext := range exts {
-		path := filepath.Join(sm.sessionsDir, sessionID+ext)
+		path := filepath.Join(sessionsDir, sessionID+ext)
 		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			slog.Warn("archive: failed to remove session file", "path", path, "err", err)
 		}

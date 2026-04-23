@@ -87,6 +87,11 @@ type Agent struct {
 
 	// sessionsDir is the path to the per-session STM databases directory.
 	sessionsDir string
+
+	// archivalStop cancels the long-running session archival goroutine.
+	// Calling ConfigureAgentForWorkspace again (workspace switch) cancels the
+	// previous goroutine before starting a new one, preventing goroutine leaks.
+	archivalStop context.CancelFunc
 }
 
 // CronScheduler is a minimal interface for stopping the cron scheduler.
@@ -175,6 +180,21 @@ func (a *Agent) SetSessionsDir(dir string) {
 // SessionsDir returns the sessions directory path.
 func (a *Agent) SessionsDir() string {
 	return a.sessionsDir
+}
+
+// SetArchivalStop sets the cancel func for the archival goroutine.
+// Calling ConfigureAgentForWorkspace again replaces the prior archival goroutine.
+func (a *Agent) SetArchivalStop(stop context.CancelFunc) {
+	a.archivalStop = stop
+}
+
+// StopArchival cancels the current archival goroutine, if any.
+// Safe to call even if no archival is running.
+func (a *Agent) StopArchival() {
+	if a.archivalStop != nil {
+		a.archivalStop()
+		a.archivalStop = nil
+	}
 }
 
 // AddBackgroundWork increments the background WaitGroup and returns a function
