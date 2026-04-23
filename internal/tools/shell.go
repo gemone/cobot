@@ -394,8 +394,8 @@ func extractRedirectWriteTargetsWithBackslashEscapes(segment string, backslashEs
 		case '\\':
 			if backslashEscapes {
 				escaped = true
-				continue
 			}
+			continue
 		case '\'', '"':
 			quote = ch
 			continue
