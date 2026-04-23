@@ -90,37 +90,6 @@ func ReadLinkedFile(skillDir, filePath string) (string, error) {
 	return string(data), nil
 }
 
-// FindSkillDir searches workspace then global skills dir for a skill by name (legacy returns parent dir).
-func FindSkillDir(wsSkillsDir, globalSkillsDir, name string) (string, error) {
-	if !IsValidLegacyName(name) {
-		return "", fmt.Errorf("invalid skill name %q", name)
-	}
-	if p, err := findSkillDirIn(name, wsSkillsDir); err == nil {
-		return p, nil
-	}
-	if globalSkillsDir != "" {
-		if p, err := findSkillDirIn(name, globalSkillsDir); err == nil {
-			return p, nil
-		}
-	}
-	return "", fmt.Errorf("skill not found: %q", name)
-}
-
-// FindNewFormatSkillDir finds a new-format SkillFile skill; errors for legacy flat files.
-func FindNewFormatSkillDir(skillsDir, name string) (string, error) {
-	if err := ValidateSkillName(name); err != nil {
-		return "", err
-	}
-	path, err := findSkillDirIn(name, skillsDir)
-	if err != nil {
-		return "", fmt.Errorf("find skill %q: %w", name, err)
-	}
-	if path == skillsDir {
-		return "", fmt.Errorf("skill %q is in legacy format; migrate to %s directory format first", name, SkillFile)
-	}
-	return path, nil
-}
-
 // EnsureContainedDir verifies that parentDir is safely contained under skillDir
 // (blocking path traversal) and creates parentDir with mode 0755 if it doesn't exist.
 // Handles symlinks in intermediate path components by resolving the longest
@@ -282,39 +251,19 @@ func loadNewFormatSkill(skillDir, category, source string) (Skill, error) {
 	return Skill{Name: fm.Name, Description: fm.Description, Category: category, Content: body, Source: source, Dir: absDir, Metadata: fm.Metadata}, nil
 }
 
-// loadLegacyFile loads a legacy flat-file skill (.md or .yaml/.yml).
-// Skips dot-files (e.g., .hidden.md) for consistency with category dir filtering.
-func loadLegacyFile(dir, filename, src string) (Skill, bool) {
-	ext := filepath.Ext(filename)
-	name := strings.TrimSuffix(filename, ext)
-	if !IsValidLegacyName(name) || strings.HasPrefix(name, ".") || (ext != ".md" && ext != ".yaml" && ext != ".yml") {
-		return Skill{}, false
+// FindSkillDir finds a skill directory by name, searching skillsDir.
+func FindSkillDir(skillsDir, name string) (string, error) {
+	if err := ValidateSkillName(name); err != nil {
+		return "", err
 	}
-	data, err := ReadFileWithLimit(filepath.Join(dir, filename), maxSkillFileSize)
+	path, err := findSkillDirIn(name, skillsDir)
 	if err != nil {
-		return Skill{}, false
+		return "", fmt.Errorf("find skill %q: %w", name, err)
 	}
-	if ext == ".md" {
-		return Skill{Name: name, Description: extractDescription(string(data)), Content: string(data), Source: src}, true
-	}
-	var ys yamlSkill
-	if err := yaml.Unmarshal(data, &ys); err != nil {
-		return Skill{}, false
-	}
-	if ys.Name != "" {
-		name = ys.Name
-		// Reject dot-prefixed names (consistent with markdown legacy skills).
-		if strings.HasPrefix(name, ".") {
-			return Skill{}, false
-		}
-	}
-	if !IsValidLegacyName(name) {
-		return Skill{}, false
-	}
-	return Skill{Name: name, Description: ys.Description, Content: ys.Content, Source: src}, true
+	return path, nil
 }
 
-// findSkillDirIn searches a single root for a skill by name (new or legacy format).
+// findSkillDirIn searches a single root for a skill by name.
 func findSkillDirIn(name, root string) (string, error) {
 	dir := filepath.Join(root, name)
 	if _, err := os.Stat(filepath.Join(dir, SkillFile)); err == nil {
@@ -329,10 +278,6 @@ func findSkillDirIn(name, root string) (string, error) {
 			if _, err := os.Stat(filepath.Join(root, ent.Name(), name, SkillFile)); err == nil {
 				return filepath.Join(root, ent.Name(), name), nil
 			}
-			continue
-		}
-		if !ent.IsDir() && strings.TrimSuffix(ent.Name(), filepath.Ext(ent.Name())) == name {
-			return root, nil
 		}
 	}
 	return "", fmt.Errorf("skill not found: %q in %s", name, root)

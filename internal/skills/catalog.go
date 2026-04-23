@@ -45,7 +45,7 @@ func LoadCatalog(ctx context.Context, dirs []string, enabledFilter []string) ([]
 // LoadFull loads tier-2 content for a specific skill by name.
 // Searches all dirs in order; workspace version wins (last-match).
 func LoadFull(ctx context.Context, dirs []string, name string) (*Skill, error) {
-	if err := ValidateSkillNameForView(name); err != nil {
+	if err := ValidateSkillName(name); err != nil {
 		return nil, err
 	}
 	// Use last-match-wins semantics, same as LoadOne.
@@ -96,7 +96,7 @@ func LoadFull(ctx context.Context, dirs []string, name string) (*Skill, error) {
 // LoadOne loads a single skill by name, searching workspace then global dirs.
 // More efficient than LoadFull for single-skill lookups — avoids scanning all skills.
 func LoadOne(ctx context.Context, dirs []string, name string) (*Skill, error) {
-	if err := ValidateSkillNameForView(name); err != nil {
+	if err := ValidateSkillName(name); err != nil {
 		return nil, err
 	}
 	// Use last-match-wins semantics (workspace overrides global), consistent with LoadCatalog.
@@ -214,8 +214,7 @@ func scanAllDirs(ctx context.Context, dirs []string, cb func(Skill)) error {
 	return nil
 }
 
-// scanDir scans a single skills directory for both new (SkillFile) and legacy (.md/.yaml) formats.
-// New-format skills (subdirectories with SKILL.md) take precedence over legacy flat files.
+// scanDir scans a single skills directory for new-format skills (subdirectories with SKILL.md).
 func scanDir(dir string, dirIndex int) ([]Skill, error) {
 	ents, err := os.ReadDir(dir)
 	if err != nil {
@@ -224,37 +223,15 @@ func scanDir(dir string, dirIndex int) ([]Skill, error) {
 	src := sourceLabel(dirIndex)
 	var result []Skill
 
-	// First pass: collect new-format skill directory names so legacy files
-	// for the same skill name are skipped.
-	skillDirs := make(map[string]struct{})
 	for _, ent := range ents {
 		if !ent.IsDir() {
 			continue
 		}
 		skillPath := filepath.Join(dir, ent.Name(), SkillFile)
 		if _, err := os.Stat(skillPath); err == nil {
-			skillDirs[ent.Name()] = struct{}{}
-		}
-	}
-
-	for _, ent := range ents {
-		if !ent.IsDir() {
-			// Skip legacy file if a new-format skill directory exists with same name.
-			base := strings.TrimSuffix(ent.Name(), filepath.Ext(ent.Name()))
-			if _, hasDir := skillDirs[base]; hasDir {
-				continue
-			}
-			if sk, ok := loadLegacyFile(dir, ent.Name(), src); ok {
+			if sk, ok := tryLoadSkillDir(dir, ent.Name(), "", src); ok {
 				result = append(result, sk)
 			}
-			continue
-		}
-		if sk, ok := tryLoadSkillDir(dir, ent.Name(), "", src); ok {
-			result = append(result, sk)
-			continue
-		}
-		// If directory has SKILL.md but failed to load, skip rather than treating as category.
-		if _, isSkillDir := skillDirs[ent.Name()]; isSkillDir {
 			continue
 		}
 		result = append(result, scanCategoryDir(dir, ent.Name(), src)...)

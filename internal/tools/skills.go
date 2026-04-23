@@ -49,7 +49,7 @@ func (h *skillsHandler) skillDirs() []string {
 }
 
 func (h *skillsHandler) findWritableDir(name string) (string, error) {
-	return skills.FindNewFormatSkillDir(h.ws.SkillsDir(), name)
+	return skills.FindSkillDir(h.ws.SkillsDir(), name)
 }
 
 // RegisterSkillsTools registers all skills-related tools.
@@ -110,13 +110,13 @@ func (h *skillsHandler) executeView(ctx context.Context, args json.RawMessage) (
 	if params.Name == "" {
 		return "", errors.New("name is required")
 	}
-	if err := skills.ValidateSkillNameForView(params.Name); err != nil {
+	if err := skills.ValidateSkillName(params.Name); err != nil {
 		return "", err
 	}
 	if params.FilePath != "" {
-		skillDir, err := skills.FindNewFormatSkillDir(h.ws.SkillsDir(), params.Name)
+		skillDir, err := skills.FindSkillDir(h.ws.SkillsDir(), params.Name)
 		if err != nil {
-			skillDir, err = skills.FindNewFormatSkillDir(workspace.GlobalSkillsDir(), params.Name)
+			skillDir, err = skills.FindSkillDir(workspace.GlobalSkillsDir(), params.Name)
 			if err != nil {
 				return "", errors.New("linked files supported only for SKILL.md format skills")
 			}
@@ -135,12 +135,6 @@ func (h *skillsHandler) executeView(ctx context.Context, args json.RawMessage) (
 			return "", fmt.Errorf("read %s: %w", skills.SkillFile, err)
 		}
 		b.WriteString(string(data))
-	} else {
-		// Legacy format — use pre-loaded content
-		if len(sk.Content) > int(skills.MaxSkillFileSize) {
-			return "", fmt.Errorf("skill content exceeds maximum size of %d bytes", skills.MaxSkillFileSize)
-		}
-		b.WriteString(sk.Content)
 	}
 	if sk.Dir != "" {
 		appendLinkedFiles(&b, sk.Dir)

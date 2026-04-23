@@ -11,6 +11,7 @@ import (
 
 	"github.com/cobot-agent/cobot/internal/config"
 	"github.com/cobot-agent/cobot/internal/sandbox"
+	"github.com/cobot-agent/cobot/internal/skills"
 	"github.com/cobot-agent/cobot/internal/workspace"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
@@ -168,7 +169,7 @@ func (t *AgentConfigUpdateTool) Execute(ctx context.Context, args json.RawMessag
 	if err := decodeArgs(args, &params); err != nil {
 		return "", err
 	}
-	if err := validateName(params.Agent); err != nil {
+	if err := skills.ValidateSkillName(params.Agent); err != nil {
 		return "", err
 	}
 

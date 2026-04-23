@@ -2,7 +2,6 @@ package workspace
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -175,8 +174,6 @@ func (w *Workspace) EffectiveSandbox(agentSandbox *sandbox.SandboxConfig) *sandb
 }
 
 func (w *Workspace) EnsureDirs() error {
-	w.MigrateLegacyLayout()
-
 	dirs := []string{
 		w.DataDir,
 		w.SessionsDir(),
@@ -192,27 +189,6 @@ func (w *Workspace) EnsureDirs() error {
 		}
 	}
 	return nil
-}
-
-// MigrateLegacyLayout performs a best-effort migration from the old layout
-// where memory.db lived at the workspace root to the new layout where it
-// lives in the memory/ subdirectory alongside other workspace data.
-// STM session DBs continue to live in sessions/.
-func (w *Workspace) MigrateLegacyLayout() {
-	legacyDB := filepath.Join(w.DataDir, "memory.db")
-	newDB := w.GetMemoryDBPath()
-
-	if _, err := os.Stat(legacyDB); err == nil {
-		if _, err := os.Stat(newDB); os.IsNotExist(err) {
-			if err := os.MkdirAll(w.MemoryDir(), 0755); err != nil {
-				slog.Warn("failed to create memory dir for migration", "dir", w.MemoryDir(), "err", err)
-				return
-			}
-			if err := os.Rename(legacyDB, newDB); err != nil {
-				slog.Warn("failed to migrate legacy memory.db", "from", legacyDB, "to", newDB, "err", err)
-			}
-		}
-	}
 }
 
 func (w *Workspace) SaveConfig() error {

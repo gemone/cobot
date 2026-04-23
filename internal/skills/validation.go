@@ -37,33 +37,10 @@ func ValidateSkillName(name string) error {
 	return nil
 }
 
-// ValidateSkillNameForView validates a skill name for read-only operations.
-// It is more permissive than ValidateSkillName to allow viewing legacy skills
-// whose names may not match the strict ^[a-z][a-z0-9-]*[a-z0-9]$ pattern,
-// while still blocking path traversal attacks.
-func ValidateSkillNameForView(name string) error {
-	if name == "" {
-		return errors.New("name is required")
-	}
-	if len(name) > viewNameMaxLen {
-		return fmt.Errorf("invalid name: too long (%d bytes)", len(name))
-	}
-	if !IsValidLegacyName(name) {
-		return fmt.Errorf("invalid name %q: path components not allowed", name)
-	}
-	return nil
-}
-
-// IsValidLegacyName checks if a name is safe for legacy flat file compat (no path traversal).
-// Returns false for empty strings.
-func IsValidLegacyName(name string) bool {
-	return name != "" && !strings.Contains(name, "/") && !strings.Contains(name, "\\") && !strings.Contains(name, "..")
-}
-
 // isValidCategoryName checks if a directory name is a valid category.
 // Blocks path traversal components and dotfiles/dot-directories.
 func isValidCategoryName(name string) bool {
-	return IsValidLegacyName(name) && !strings.HasPrefix(name, ".")
+	return name != "" && !strings.Contains(name, "/") && !strings.Contains(name, "\\") && !strings.Contains(name, "..") && !strings.HasPrefix(name, ".")
 }
 
 // IsPathTraversalSafe returns false if filePath contains traversal patterns.
