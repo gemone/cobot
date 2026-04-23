@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"runtime"
 )
 
 type LaunchRequest struct {
@@ -19,7 +20,8 @@ type Backend interface {
 }
 
 type Launcher struct {
-	backend Backend
+	backend        Backend
+	sandboxConfig  *SandboxConfig
 }
 
 type LauncherOption func(*Launcher)
@@ -29,6 +31,12 @@ func WithBackend(backend Backend) LauncherOption {
 		if backend != nil {
 			l.backend = backend
 		}
+	}
+}
+
+func WithSandboxConfig(cfg *SandboxConfig) LauncherOption {
+	return func(l *Launcher) {
+		l.sandboxConfig = cfg
 	}
 }
 
@@ -50,10 +58,17 @@ func (l *Launcher) Launch(ctx context.Context, req *LaunchRequest) ([]byte, erro
 	if l == nil {
 		l = NewLauncher()
 	}
-	if l.backend == nil {
-		l.backend = hostBackend{}
+
+	// Select backend: bwrap on Linux when sandbox is active, otherwise host.
+	backend := l.backend
+	if backend == nil {
+		backend = hostBackend{}
 	}
-	return l.backend.Launch(ctx, req)
+	if l.sandboxConfig != nil && l.sandboxConfig.VirtualRoot != "" && runtime.GOOS == "linux" {
+		backend = BwrapBackend{}
+	}
+
+	return backend.Launch(ctx, req)
 }
 
 type hostBackend struct{}

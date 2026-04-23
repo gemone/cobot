@@ -53,11 +53,19 @@ var networkCommands = []string{
 
 func NewShellExecTool(opts ...ShellExecToolOption) *ShellExecTool {
 	t := &ShellExecTool{
-		launcher: sandbox.NewLauncher(),
-		timeout:  defaultShellTimeout,
+		timeout: defaultShellTimeout,
 	}
 	for _, opt := range opts {
 		opt(t)
+	}
+	// Only create a sandbox-aware launcher if the user didn't supply one explicitly.
+	// WithShellLauncher takes precedence so tests can inject a stub backend.
+	if t.launcher == nil {
+		if t.config != nil {
+			t.launcher = sandbox.NewLauncher(sandbox.WithSandboxConfig(t.config))
+		} else {
+			t.launcher = sandbox.NewLauncher()
+		}
 	}
 	return t
 }
