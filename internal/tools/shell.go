@@ -254,7 +254,11 @@ func isShellSpace(ch byte) bool {
 	}
 }
 
-func nextShellWord(segment string, start int) (string, int) {
+func shellWordBackslashEscapes() bool {
+	return runtime.GOOS != "windows"
+}
+
+func nextShellWordWithBackslashEscapes(segment string, start int, backslashEscapes bool) (string, int) {
 	var builder strings.Builder
 	quote := byte(0)
 	escaped := false
@@ -271,7 +275,11 @@ func nextShellWord(segment string, start int) (string, int) {
 		}
 		switch ch {
 		case '\\':
-			escaped = true
+			if backslashEscapes {
+				escaped = true
+				continue
+			}
+			builder.WriteByte(ch)
 		case '\'', '"':
 			if quote == 0 {
 				quote = ch
@@ -290,7 +298,11 @@ func nextShellWord(segment string, start int) (string, int) {
 	return builder.String(), len(segment)
 }
 
-func splitShellWords(segment string) []string {
+func nextShellWord(segment string, start int) (string, int) {
+	return nextShellWordWithBackslashEscapes(segment, start, shellWordBackslashEscapes())
+}
+
+func splitShellWordsWithBackslashEscapes(segment string, backslashEscapes bool) []string {
 	words := make([]string, 0)
 	for i := 0; i < len(segment); {
 		for i < len(segment) && isShellSpace(segment[i]) {
@@ -299,7 +311,7 @@ func splitShellWords(segment string) []string {
 		if i >= len(segment) {
 			break
 		}
-		word, next := nextShellWord(segment, i)
+		word, next := nextShellWordWithBackslashEscapes(segment, i, backslashEscapes)
 		if word == "" && next <= i {
 			break
 		}
@@ -311,8 +323,12 @@ func splitShellWords(segment string) []string {
 	return words
 }
 
-func extractTeeWriteTargets(segment string) []shellWriteTarget {
-	words := splitShellWords(segment)
+func splitShellWords(segment string) []string {
+	return splitShellWordsWithBackslashEscapes(segment, shellWordBackslashEscapes())
+}
+
+func extractTeeWriteTargetsWithBackslashEscapes(segment string, backslashEscapes bool) []shellWriteTarget {
+	words := splitShellWordsWithBackslashEscapes(segment, backslashEscapes)
 	if len(words) == 0 || filepath.Base(words[0]) != "tee" {
 		return nil
 	}
@@ -345,7 +361,11 @@ func extractTeeWriteTargets(segment string) []shellWriteTarget {
 	return targets
 }
 
-func extractRedirectWriteTargets(segment string) []shellWriteTarget {
+func extractTeeWriteTargets(segment string) []shellWriteTarget {
+	return extractTeeWriteTargetsWithBackslashEscapes(segment, shellWordBackslashEscapes())
+}
+
+func extractRedirectWriteTargetsWithBackslashEscapes(segment string, backslashEscapes bool) []shellWriteTarget {
 	targets := make([]shellWriteTarget, 0)
 	quote := byte(0)
 	escaped := false
@@ -357,7 +377,7 @@ func extractRedirectWriteTargets(segment string) []shellWriteTarget {
 				escaped = false
 				continue
 			}
-			if ch == '\\' && quote == '"' {
+			if backslashEscapes && ch == '\\' && quote == '"' {
 				escaped = true
 				continue
 			}
@@ -372,8 +392,10 @@ func extractRedirectWriteTargets(segment string) []shellWriteTarget {
 		}
 		switch ch {
 		case '\\':
-			escaped = true
-			continue
+			if backslashEscapes {
+				escaped = true
+				continue
+			}
 		case '\'', '"':
 			quote = ch
 			continue
@@ -401,7 +423,7 @@ func extractRedirectWriteTargets(segment string) []shellWriteTarget {
 			continue
 		}
 
-		path, next := nextShellWord(segment, start)
+		path, next := nextShellWordWithBackslashEscapes(segment, start, backslashEscapes)
 		if path == "" {
 			continue
 		}
@@ -410,6 +432,10 @@ func extractRedirectWriteTargets(segment string) []shellWriteTarget {
 	}
 
 	return targets
+}
+
+func extractRedirectWriteTargets(segment string) []shellWriteTarget {
+	return extractRedirectWriteTargetsWithBackslashEscapes(segment, shellWordBackslashEscapes())
 }
 
 func resolveWriteTargetPath(path, commandDir string) (string, error) {

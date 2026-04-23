@@ -265,6 +265,41 @@ func TestValidateWritePaths_RejectsCommonRedirectWriteSyntaxes(t *testing.T) {
 	}
 }
 
+func TestExtractRedirectWriteTargets_PreservesWindowsAbsolutePath(t *testing.T) {
+	windowsPath := `C:\Users\runner\AppData\Local\Temp\out.txt`
+	targets := extractRedirectWriteTargetsWithBackslashEscapes("echo hello > "+windowsPath, false)
+	if len(targets) != 1 {
+		t.Fatalf("expected 1 target, got %d", len(targets))
+	}
+	if targets[0].path != windowsPath {
+		t.Fatalf("redirect path = %q, want %q", targets[0].path, windowsPath)
+	}
+}
+
+func TestExtractTeeWriteTargets_PreservesWindowsAbsolutePath(t *testing.T) {
+	windowsPath := `C:\Users\runner\AppData\Local\Temp\tee-out.txt`
+	targets := extractTeeWriteTargetsWithBackslashEscapes("tee -a "+windowsPath, false)
+	if len(targets) != 1 {
+		t.Fatalf("expected 1 target, got %d", len(targets))
+	}
+	if targets[0].path != windowsPath {
+		t.Fatalf("tee path = %q, want %q", targets[0].path, windowsPath)
+	}
+	if !targets[0].append {
+		t.Fatal("expected tee append mode to be preserved")
+	}
+}
+
+func TestExtractRedirectWriteTargets_PreservesUnixEscapedSpaces(t *testing.T) {
+	targets := extractRedirectWriteTargetsWithBackslashEscapes(`echo hello > out\ file.txt`, true)
+	if len(targets) != 1 {
+		t.Fatalf("expected 1 target, got %d", len(targets))
+	}
+	if targets[0].path != "out file.txt" {
+		t.Fatalf("redirect path = %q, want %q", targets[0].path, "out file.txt")
+	}
+}
+
 // --- ShellExecTool integration tests ---
 
 func TestShellExecTool_NoSandbox(t *testing.T) {
