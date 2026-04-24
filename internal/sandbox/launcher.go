@@ -3,9 +3,9 @@ package sandbox
 import (
 	"context"
 	"fmt"
-	"os/exec"
 )
 
+// LaunchRequest contains the parameters for launching a sandboxed command.
 type LaunchRequest struct {
 	Shell     string
 	ShellFlag string
@@ -14,35 +14,41 @@ type LaunchRequest struct {
 	Config    *SandboxConfig
 }
 
-type Backend interface {
-	Launch(context.Context, *LaunchRequest) ([]byte, error)
-}
-
+// Launcher runs commands in a sandbox environment.
 type Launcher struct {
-	backend Backend
+	sandboxConfig *SandboxConfig
+	launchFunc    func(ctx context.Context, req *LaunchRequest) ([]byte, error)
 }
 
+// LauncherOption configures a Launcher.
 type LauncherOption func(*Launcher)
 
-func WithBackend(backend Backend) LauncherOption {
+// WithSandboxConfig sets the sandbox configuration for a Launcher.
+func WithSandboxConfig(cfg *SandboxConfig) LauncherOption {
 	return func(l *Launcher) {
-		if backend != nil {
-			l.backend = backend
-		}
+		l.sandboxConfig = cfg
 	}
 }
 
+// WithLaunchFunc sets a custom launch function for testing.
+func WithLaunchFunc(fn func(ctx context.Context, req *LaunchRequest) ([]byte, error)) LauncherOption {
+	return func(l *Launcher) {
+		l.launchFunc = fn
+	}
+}
+
+// NewLauncher creates a Launcher with the given options.
 func NewLauncher(opts ...LauncherOption) *Launcher {
-	launcher := &Launcher{backend: hostBackend{}}
+	launcher := &Launcher{launchFunc: platformLaunch}
 	for _, opt := range opts {
 		opt(launcher)
-	}
-	if launcher.backend == nil {
-		launcher.backend = hostBackend{}
 	}
 	return launcher
 }
 
+// Launch runs a command in a sandboxed subprocess.
+// On Linux, this uses Landlock for filesystem and network isolation.
+// On other platforms, it falls back to direct command execution.
 func (l *Launcher) Launch(ctx context.Context, req *LaunchRequest) ([]byte, error) {
 	if req == nil {
 		return nil, fmt.Errorf("launch request is required")
@@ -50,21 +56,12 @@ func (l *Launcher) Launch(ctx context.Context, req *LaunchRequest) ([]byte, erro
 	if l == nil {
 		l = NewLauncher()
 	}
-	if l.backend == nil {
-		l.backend = hostBackend{}
+	// Merge launcher-level config as default when request has no config.
+	if req.Config == nil && l.sandboxConfig != nil {
+		req.Config = l.sandboxConfig
 	}
-	return l.backend.Launch(ctx, req)
-}
-
-type hostBackend struct{}
-
-func (hostBackend) Launch(ctx context.Context, req *LaunchRequest) ([]byte, error) {
-	if req == nil {
-		return nil, fmt.Errorf("launch request is required")
+	if l.launchFunc != nil {
+		return l.launchFunc(ctx, req)
 	}
-	cmd := exec.CommandContext(ctx, req.Shell, req.ShellFlag, req.Command)
-	if req.Dir != "" {
-		cmd.Dir = req.Dir
-	}
-	return cmd.CombinedOutput()
+	return platformLaunch(ctx, req)
 }

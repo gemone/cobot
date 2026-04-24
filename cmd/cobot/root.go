@@ -10,9 +10,20 @@ import (
 
 	"github.com/cobot-agent/cobot/internal/config"
 	"github.com/cobot-agent/cobot/internal/debuglog"
+	"github.com/cobot-agent/cobot/internal/sandbox"
 	"github.com/cobot-agent/cobot/internal/workspace"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
+
+func init() {
+	// Handle sandbox child mode early, before any other initialization.
+	// If this process was re-executed in Landlock child mode, detect the
+	// child-mode sentinel, apply the Landlock policy, and complete the
+	// child execution path before normal CLI setup continues.
+	if sandbox.HandleSandboxChildMode() {
+		os.Exit(0)
+	}
+}
 
 var (
 	cfgPath       string

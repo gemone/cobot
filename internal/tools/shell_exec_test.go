@@ -13,15 +13,15 @@ import (
 	sandboxpkg "github.com/cobot-agent/cobot/internal/sandbox"
 )
 
-type stubBackend struct {
+type stubLauncher struct {
 	request *sandboxpkg.LaunchRequest
 	output  []byte
 	err     error
 }
 
-func (b *stubBackend) Launch(_ context.Context, req *sandboxpkg.LaunchRequest) ([]byte, error) {
-	b.request = req
-	return b.output, b.err
+func (s *stubLauncher) Launch(_ context.Context, req *sandboxpkg.LaunchRequest) ([]byte, error) {
+	s.request = req
+	return s.output, s.err
 }
 
 // --- validateWritePaths unit tests ---
@@ -500,11 +500,11 @@ func TestShellExecTool_UsesLauncher(t *testing.T) {
 	}
 	cfg.SetAllowNetwork(false)
 
-	backend := &stubBackend{output: []byte("launcher ok")}
+	backend := &stubLauncher{output: []byte("launcher ok")}
 	tool := NewShellExecTool(
 		WithShellWorkdir(dir),
 		WithShellSandboxConfig(cfg),
-		WithShellLauncher(sandboxpkg.NewLauncher(sandboxpkg.WithBackend(backend))),
+		WithShellLauncher(sandboxpkg.NewLauncher(sandboxpkg.WithLaunchFunc(backend.Launch))),
 	)
 
 	args, _ := json.Marshal(map[string]any{"command": "echo ok"})
@@ -542,9 +542,9 @@ func TestShellExecTool_UsesLauncher(t *testing.T) {
 }
 
 func TestShellExecTool_UsesLauncherError(t *testing.T) {
-	backend := &stubBackend{err: errors.New("launcher failure")}
+	backend := &stubLauncher{err: errors.New("launcher failure")}
 	tool := NewShellExecTool(
-		WithShellLauncher(sandboxpkg.NewLauncher(sandboxpkg.WithBackend(backend))),
+		WithShellLauncher(sandboxpkg.NewLauncher(sandboxpkg.WithLaunchFunc(backend.Launch))),
 	)
 
 	args, _ := json.Marshal(map[string]any{"command": "echo ok"})
