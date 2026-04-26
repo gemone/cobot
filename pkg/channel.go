@@ -2,6 +2,8 @@ package cobot
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"sync"
 )
 
@@ -111,4 +113,33 @@ func (b *BaseChannel) WithLock(fn func()) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	fn()
+}
+
+// ErrNotSupported indicates the platform does not support the requested operation.
+var ErrNotSupported = errors.New("operation not supported by this platform")
+
+// PlatformAdapter abstracts a messaging platforms capabilities.
+// Each platform (Feishu, Telegram, Discord) implements this interface.
+// Lifecycle: New -> Connect -> (send/recv loop) -> Disconnect
+type PlatformAdapter interface {
+	// Platform returns the platform identifier, e.g. "feishu", "telegram".
+	Platform() string
+
+	// Connect initializes the platform connection.
+	// Returns an http.Handler that the Gateway registers at /webhook/{platform}/.
+	// Return nil if the platform does not need HTTP routes.
+	Connect() (http.Handler, error)
+
+	// Disconnect releases platform resources.
+	Disconnect() error
+
+	// Send delivers an outbound message to the platform.
+	Send(ctx context.Context, msg *OutboundMessage) (*SendResult, error)
+
+	// EditMessage updates a previously sent message (for pseudo-streaming).
+	// Platforms that dont support editing should return nil, ErrNotSupported.
+	EditMessage(ctx context.Context, chatID, messageID, content string) (*SendResult, error)
+
+	// OnMessage registers the inbound message callback. Must be called before Connect.
+	OnMessage(handler func(ctx context.Context, msg *InboundMessage))
 }

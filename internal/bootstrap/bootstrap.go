@@ -17,6 +17,7 @@ import (
 	"github.com/cobot-agent/cobot/internal/channel"
 	"github.com/cobot-agent/cobot/internal/config"
 	"github.com/cobot-agent/cobot/internal/cron"
+	"github.com/cobot-agent/cobot/internal/gateway"
 	"github.com/cobot-agent/cobot/internal/llm"
 	"github.com/cobot-agent/cobot/internal/memory"
 	"github.com/cobot-agent/cobot/internal/sandbox"
@@ -431,4 +432,40 @@ func newSubAgent(a *agent.Agent, registry cobot.ModelResolver, filteredTools cob
 		sub.SetProvider(a.Provider())
 	}
 	return sub
+}
+
+// ConfigureGateway creates a Gateway, registers configured platform adapters,
+// and starts it. Returns the Gateway for lifecycle management by the CLI.
+// Platform adapters are registered based on channel configs — currently only
+// the framework is wired; specific adapters will be added in follow-up PRs.
+func ConfigureGateway(res *Result, cfg cobot.GatewayConfig) (*gateway.Gateway, error) {
+	handler := func(ctx context.Context, msg *cobot.InboundMessage, replyFunc gateway.ReplyFunc) error {
+		registry := res.Agent.Registry()
+		filtered := res.Agent.ToolRegistry().Clone().Without("delegate_task")
+		sub := newSubAgent(res.Agent, registry, filtered)
+
+		resp, err := sub.Prompt(ctx, msg.Text)
+		if err != nil {
+			return fmt.Errorf("agent prompt: %w", err)
+		}
+		if resp.Content != "" {
+			_, err := replyFunc(&cobot.OutboundMessage{
+				ReceiveID:   msg.ChatID,
+				ReceiveType: msg.ChatType,
+				Text:        resp.Content,
+			})
+			return err
+		}
+		return nil
+	}
+
+	gw := gateway.New(gateway.Config{Addr: cfg.Addr}, handler)
+
+	// TODO: Register platform adapters based on res.Agent.Config().Channels
+	// This will be implemented when specific adapters (feishu, etc.) are added.
+
+	if err := gw.Start(); err != nil {
+		return nil, fmt.Errorf("start gateway: %w", err)
+	}
+	return gw, nil
 }

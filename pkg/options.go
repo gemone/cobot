@@ -16,6 +16,7 @@ type Config struct {
 	Memory       MemoryConfig              `yaml:"memory,omitempty"`
 	Session      SessionConfig             `yaml:"session,omitempty"`
 	Channels     []ChannelConfig           `yaml:"channels,omitempty"`
+	Gateway     GatewayConfig            `yaml:"gateway,omitempty"`
 }
 
 // ChannelConfig defines a named communication channel.
@@ -52,6 +53,11 @@ type SessionConfig struct {
 	// SummaryModel specifies a dedicated model for summarization/compression.
 	// Empty string means use the current conversation model.
 	SummaryModel string `yaml:"summary_model,omitempty"`
+}
+
+// GatewayConfig holds gateway server settings.
+type GatewayConfig struct {
+	Addr string `yaml:"addr,omitempty"`
 }
 
 type ProviderConfig struct {
