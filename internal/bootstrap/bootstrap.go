@@ -461,10 +461,35 @@ func ConfigureGateway(res *Result, cfg cobot.GatewayConfig) (*gateway.Gateway, e
 
 	gw := gateway.New(gateway.Config{Addr: cfg.Addr}, res.ChannelMgr, handler)
 
-	// RegisterChannelFunc is set by channel implementation packages
-	// (feishu, reverse, etc.) when they are imported. This decouples
-	// gateway core from concrete channel types.
-	// TODO: Wire channel registration in follow-up PR.
+	// Set up reverse channel factory for REST API registration.
+	gw.SetRegisterReverseFunc(func(id, callbackURL, secret string) (cobot.MessageChannel, error) {
+		return channel.NewReverseChannel(id, callbackURL, secret), nil
+	})
+
+	// Register channels from config.
+	for _, chCfg := range res.Agent.Config().Channels {
+		switch chCfg.Type {
+		case "feishu":
+			fc, err := channel.NewFeishuChannel(chCfg.Type+":"+chCfg.Name, channel.FeishuConfig{
+				AppID:             chCfg.Config["app_id"],
+				AppSecret:         chCfg.Config["app_secret"],
+				VerificationToken: chCfg.Config["verification_token"],
+				EncryptKey:        chCfg.Config["encrypt_key"],
+				DefaultChatID:     chCfg.Config["default_chat_id"],
+			})
+			if err != nil {
+				slog.Error("failed to create feishu channel", "name", chCfg.Name, "error", err)
+				continue
+			}
+			if err := gw.RegisterChannel(fc); err != nil {
+				slog.Error("failed to register feishu channel", "name", chCfg.Name, "error", err)
+			}
+		case "tui":
+			// TUI channels are registered by the TUI command, not gateway.
+		default:
+			slog.Warn("unknown channel type in gateway config", "type", chCfg.Type, "name", chCfg.Name)
+		}
+	}
 
 	if err := gw.Start(); err != nil {
 		return nil, fmt.Errorf("start gateway: %w", err)
