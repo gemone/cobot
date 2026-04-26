@@ -22,8 +22,9 @@ type Config struct {
 // ChannelConfig defines a named communication channel.
 // Multiple channels of the same type can coexist as long as their names are unique.
 type ChannelConfig struct {
-	Name string `yaml:"name"` // unique name, e.g. "feishu-group-a", "tui"
-	Type string `yaml:"type"` // "tui", "feishu", "weixin", etc.
+	Name   string            `yaml:"name"`             // unique name, e.g. "feishu-group-a", "tui"
+	Type   string            `yaml:"type"`             // "tui", "feishu", "reverse", etc.
+	Config map[string]string `yaml:"config,omitempty"` // platform-specific config (app_id, etc.)
 }
 
 // EnsureAPIKeys initializes the APIKeys map if nil.

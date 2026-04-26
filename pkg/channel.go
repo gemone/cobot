@@ -25,12 +25,12 @@ type Notifier interface {
 }
 
 // Channel is an abstract communication endpoint that can receive notifications.
-// Implementations: TUI, WeChat, Feishu, etc.
+// Implementations: TUI, Feishu, Reverse, etc.
 type Channel interface {
 	// ID returns a unique identifier for this channel (e.g., "tui:default").
 	ID() string
 
-	// Send delivers a message to this channel.
+	// Send delivers a notification message to this channel.
 	// Should be non-blocking or have a short timeout.
 	// Send must be safe to call concurrently with Close.
 	Send(ctx context.Context, msg ChannelMessage) error
@@ -118,28 +118,33 @@ func (b *BaseChannel) WithLock(fn func()) {
 // ErrNotSupported indicates the platform does not support the requested operation.
 var ErrNotSupported = errors.New("operation not supported by this platform")
 
-// PlatformAdapter abstracts a messaging platform's capabilities.
-// Each platform (Feishu, Telegram, Discord) implements this interface.
-// Lifecycle: New -> Connect -> (send/recv loop) -> Disconnect
-type PlatformAdapter interface {
-	// Platform returns the platform identifier, e.g. "feishu", "telegram".
+// MessageChannel extends Channel with bidirectional IM communication.
+// Implementations: Feishu, Reverse, etc.
+// The Gateway registers OnMessage handlers and calls SendMessage for replies.
+type MessageChannel interface {
+	Channel
+
+	// Platform returns the platform identifier, e.g. "feishu", "reverse".
 	Platform() string
 
-	// Connect initializes the platform connection.
-	// Returns an http.Handler that the Gateway registers at /webhook/{platform}/.
-	// Return nil if the platform does not need HTTP routes.
-	Connect() (http.Handler, error)
+	// OnMessage registers the inbound message callback. Must be called before
+	// the Gateway starts processing messages.
+	OnMessage(handler func(ctx context.Context, msg *InboundMessage))
 
-	// Disconnect releases platform resources.
-	Disconnect() error
-
-	// Send delivers an outbound message to the platform.
-	Send(ctx context.Context, msg *OutboundMessage) (*SendResult, error)
+	// SendMessage sends an outbound message to the platform.
+	SendMessage(ctx context.Context, msg *OutboundMessage) (*SendResult, error)
 
 	// EditMessage updates a previously sent message (for pseudo-streaming).
 	// Platforms that don't support editing should return nil, ErrNotSupported.
 	EditMessage(ctx context.Context, chatID, messageID, content string) (*SendResult, error)
+}
 
-	// OnMessage registers the inbound message callback. Must be called before Connect.
-	OnMessage(handler func(ctx context.Context, msg *InboundMessage))
+// HTTPChannel is an optional extension of MessageChannel that provides a
+// webhook HTTP handler. Platforms like Feishu implement this so the Gateway
+// can automatically mount /webhook/{channel_id}/.
+type HTTPChannel interface {
+	MessageChannel
+
+	// HTTPHandler returns the platform's webhook handler for incoming events.
+	HTTPHandler() http.Handler
 }

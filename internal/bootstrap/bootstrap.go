@@ -435,19 +435,15 @@ func newSubAgent(a *agent.Agent, registry cobot.ModelResolver, filteredTools cob
 	return sub
 }
 
-// ConfigureGateway creates a Gateway, registers configured platform adapters,
+// ConfigureGateway creates a Gateway, registers configured channels,
 // and starts it. Returns the Gateway for lifecycle management by the CLI.
-// Platform adapters are registered based on channel configs — currently only
-// the framework is wired; specific adapters will be added in follow-up PRs.
 func ConfigureGateway(res *Result, cfg cobot.GatewayConfig) (*gateway.Gateway, error) {
-	subAgents := &sync.Map{}
-
 	registry := res.Agent.Registry()
 	filtered := res.Agent.ToolRegistry().Clone().Without("delegate_task")
+	subAgents := &sync.Map{}
 
 	handler := func(ctx context.Context, msg *cobot.InboundMessage, replyFunc gateway.ReplyFunc) error {
 		agentKey := msg.Platform + ":" + msg.ChatID
-
 		candidate := newSubAgent(res.Agent, registry, filtered)
 		actual, _ := subAgents.LoadOrStore(agentKey, candidate)
 		sub := actual.(*agent.Agent)
@@ -457,20 +453,43 @@ func ConfigureGateway(res *Result, cfg cobot.GatewayConfig) (*gateway.Gateway, e
 			return fmt.Errorf("agent prompt: %w", err)
 		}
 		if resp.Content != "" {
-			_, err := replyFunc(&cobot.OutboundMessage{
-				ReceiveID:   msg.ChatID,
-				ReceiveType: msg.ChatType,
-				Text:        resp.Content,
-			})
+			_, err := replyFunc(&cobot.OutboundMessage{Text: resp.Content})
 			return err
 		}
 		return nil
 	}
 
-	gw := gateway.New(gateway.Config{Addr: cfg.Addr}, handler)
+	gw := gateway.New(gateway.Config{Addr: cfg.Addr}, res.ChannelMgr, handler)
 
-	// TODO: Register platform adapters based on res.Agent.Config().Channels
-	// This will be implemented when specific adapters (feishu, etc.) are added.
+	// Set up reverse channel factory for REST API registration.
+	gw.SetRegisterReverseFunc(func(id, callbackURL, secret string) (cobot.MessageChannel, error) {
+		return channel.NewReverseChannel(id, callbackURL, secret), nil
+	})
+
+	// Register channels from config.
+	for _, chCfg := range res.Agent.Config().Channels {
+		switch chCfg.Type {
+		case "feishu":
+			fc, err := channel.NewFeishuChannel(chCfg.Type+":"+chCfg.Name, channel.FeishuConfig{
+				AppID:             chCfg.Config["app_id"],
+				AppSecret:         chCfg.Config["app_secret"],
+				VerificationToken: chCfg.Config["verification_token"],
+				EncryptKey:        chCfg.Config["encrypt_key"],
+				DefaultChatID:     chCfg.Config["default_chat_id"],
+			})
+			if err != nil {
+				slog.Error("failed to create feishu channel", "name", chCfg.Name, "error", err)
+				continue
+			}
+			if err := gw.RegisterChannel(fc); err != nil {
+				slog.Error("failed to register feishu channel", "name", chCfg.Name, "error", err)
+			}
+		case "tui":
+			// TUI channels are registered by the TUI command, not gateway.
+		default:
+			slog.Warn("unknown channel type in gateway config", "type", chCfg.Type, "name", chCfg.Name)
+		}
+	}
 
 	if err := gw.Start(); err != nil {
 		return nil, fmt.Errorf("start gateway: %w", err)
