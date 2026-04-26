@@ -87,6 +87,17 @@ func TestNewGateway(t *testing.T) {
 	}
 }
 
+func TestNewGatewayNilManager(t *testing.T) {
+	gw := New(Config{Addr: "127.0.0.1:0"}, nil, nil)
+	if gw == nil {
+		t.Fatal("expected non-nil gateway with nil manager")
+	}
+	if err := gw.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer gw.Shutdown(context.Background())
+}
+
 func TestGatewayHealthEndpoint(t *testing.T) {
 	mgr := channel.NewManager()
 	gw := New(Config{Addr: "127.0.0.1:0"}, mgr, nil)
@@ -122,13 +133,11 @@ func TestGatewayRegisterChannel(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Simulate inbound message
 	mc.simulateInbound("hello", "chat1", "msg1")
 	if received == nil || *received != "hello" {
 		t.Fatalf("expected 'hello', got %v", received)
 	}
 
-	// Check that SendMessage was called with the reply
 	sent := mc.getSent()
 	if len(sent) != 1 {
 		t.Fatalf("expected 1 sent message, got %d", len(sent))
@@ -155,7 +164,6 @@ func TestGatewayDedup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Send same message twice
 	mc.simulateInbound("hello", "chat1", "msg-dup")
 	mc.simulateInbound("hello", "chat1", "msg-dup")
 
@@ -178,7 +186,6 @@ func TestGatewayEmptyMessageIDNoDedup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Empty MessageID — should NOT be deduped
 	mc.simulateInbound("hello", "chat1", "")
 	mc.simulateInbound("hello", "chat1", "")
 
@@ -238,6 +245,21 @@ func TestGatewayChannelValidation(t *testing.T) {
 	mc2 := newMockMessageChannel("UPPER CASE", "mock")
 	if err := gw.RegisterChannel(mc2); err == nil {
 		t.Fatal("expected error for invalid ID")
+	}
+}
+
+func TestGatewayDuplicateRegistration(t *testing.T) {
+	mgr := channel.NewManager()
+	gw := New(Config{}, mgr, nil)
+
+	mc := newMockMessageChannel("dup-ch", "mock")
+	if err := gw.RegisterChannel(mc); err != nil {
+		t.Fatal(err)
+	}
+	// Second registration of same ID should fail.
+	mc2 := newMockMessageChannel("dup-ch", "mock")
+	if err := gw.RegisterChannel(mc2); err == nil {
+		t.Fatal("expected error for duplicate ID")
 	}
 }
 
@@ -307,5 +329,176 @@ func TestGatewaySendMessage(t *testing.T) {
 
 	if receivedText != "hello" {
 		t.Fatalf("expected 'hello', got %q", receivedText)
+	}
+}
+
+func TestGatewaySendMessageMissingChatID(t *testing.T) {
+	mgr := channel.NewManager()
+	gw := New(Config{Addr: "127.0.0.1:0"}, mgr, func(ctx context.Context, msg *cobot.InboundMessage, rf ReplyFunc) error { return nil })
+	mc := newMockMessageChannel("nochid-ch", "mock")
+	gw.RegisterChannel(mc)
+
+	if err := gw.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer gw.Shutdown(context.Background())
+
+	body := `{"text":"hello"}`
+	resp, err := http.Post(
+		"http://"+gw.Addr()+"/api/v1/channels/nochid-ch/messages",
+		"application/json",
+		strings.NewReader(body),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for missing chat_id, got %d", resp.StatusCode)
+	}
+}
+
+func TestGatewaySendMessageNilHandler(t *testing.T) {
+	mgr := channel.NewManager()
+	gw := New(Config{Addr: "127.0.0.1:0"}, mgr, nil) // nil handler
+	mc := newMockMessageChannel("nilh-ch", "mock")
+	gw.RegisterChannel(mc)
+
+	if err := gw.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer gw.Shutdown(context.Background())
+
+	body := `{"chat_id":"chat1","text":"hello"}`
+	resp, err := http.Post(
+		"http://"+gw.Addr()+"/api/v1/channels/nilh-ch/messages",
+		"application/json",
+		strings.NewReader(body),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 for nil handler, got %d", resp.StatusCode)
+	}
+}
+
+func TestGatewayRegisterReverseChannel(t *testing.T) {
+	mgr := channel.NewManager()
+	gw := New(Config{Addr: "127.0.0.1:0"}, mgr, func(ctx context.Context, msg *cobot.InboundMessage, rf ReplyFunc) error { return nil })
+	gw.SetRegisterReverseFunc(func(id, callbackURL, secret string) (cobot.MessageChannel, error) {
+		return newMockMessageChannel(id, "reverse"), nil
+	})
+
+	if err := gw.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer gw.Shutdown(context.Background())
+
+	body := `{"id":"rev-ch","callback_url":"http://example.com/cb"}`
+	resp, err := http.Post(
+		"http://"+gw.Addr()+"/api/v1/channels",
+		"application/json",
+		strings.NewReader(body),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	if result["id"] != "rev-ch" {
+		t.Fatalf("expected id 'rev-ch', got %v", result["id"])
+	}
+	// mock channel implements HTTPChannel, so webhook should be present
+	if _, hasWebhook := result["webhook"]; !hasWebhook {
+		t.Fatal("expected webhook field for HTTPChannel mock")
+	}
+}
+
+func TestGatewayUnregisterChannel(t *testing.T) {
+	mgr := channel.NewManager()
+	gw := New(Config{Addr: "127.0.0.1:0"}, mgr, nil)
+	mc := newMockMessageChannel("unreg-ch", "mock")
+	gw.RegisterChannel(mc)
+
+	if err := gw.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer gw.Shutdown(context.Background())
+
+	req, _ := http.NewRequest(http.MethodDelete, "http://"+gw.Addr()+"/api/v1/channels/unreg-ch", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+
+	// Channel should be gone now
+	_, ok := gw.channelMgr.Get("unreg-ch")
+	if ok {
+		t.Fatal("expected channel to be unregistered")
+	}
+}
+
+func TestGatewayAPIKeyAuth(t *testing.T) {
+	mgr := channel.NewManager()
+	gw := New(Config{Addr: "127.0.0.1:0"}, mgr, nil)
+	gw.SetAPIKey("secret123")
+
+	if err := gw.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer gw.Shutdown(context.Background())
+
+	// Without API key → 401
+	resp, err := http.Get("http://" + gw.Addr() + "/api/v1/channels")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 without API key, got %d", resp.StatusCode)
+	}
+
+	// With API key → 200
+	req, _ := http.NewRequest(http.MethodGet, "http://"+gw.Addr()+"/api/v1/channels", nil)
+	req.Header.Set("Authorization", "Bearer secret123")
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 with API key, got %d", resp2.StatusCode)
+	}
+}
+
+func TestGatewayHealthNoAuthRequired(t *testing.T) {
+	mgr := channel.NewManager()
+	gw := New(Config{Addr: "127.0.0.1:0"}, mgr, nil)
+	gw.SetAPIKey("secret123")
+
+	if err := gw.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer gw.Shutdown(context.Background())
+
+	// /health should work without API key
+	resp, err := http.Get("http://" + gw.Addr() + "/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 on health without auth, got %d", resp.StatusCode)
 	}
 }
