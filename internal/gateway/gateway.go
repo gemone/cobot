@@ -52,8 +52,12 @@ type Gateway struct {
 	// apiKey for REST API authentication.
 	apiKey string
 
-	// registered tracks channel IDs that have been registered via RegisterChannel.
-	registered map[string]struct{}
+	// registered tracks channel instances registered via RegisterChannel.
+	registered map[string]cobot.MessageChannel
+
+	// webhookHandlers stores HTTPChannel handlers keyed by channel ID
+	// for the single /webhook/ dispatcher.
+	webhookHandlers map[string]http.Handler
 
 	// lifecycle
 	listener   net.Listener
@@ -92,28 +96,24 @@ func New(cfg Config, channelMgr *channel.Manager, handler MessageHandler) *Gatew
 		handler:    handler,
 		dedup:      make(map[string]time.Time),
 		reverse:    make(map[string]*reverseEntry),
-		registered: make(map[string]struct{}),
+		registered:      make(map[string]cobot.MessageChannel),
+		webhookHandlers: make(map[string]http.Handler),
+		apiKey:          cfg.APIKey,
 	}
 	mux.HandleFunc("/health", gw.handleHealth)
 	mux.HandleFunc("/api/v1/channels", gw.requireAPIKey(gw.handleChannels))
 	mux.HandleFunc("/api/v1/channels/", gw.requireAPIKey(gw.handleChannelMessages))
+	mux.HandleFunc("/webhook/", gw.handleWebhook)
 	return gw
 }
 
 // requireAPIKey wraps an http.HandlerFunc with API key authentication.
 // If no APIKey is configured, all requests are allowed.
+// Accepts key only via Authorization header (Bearer token or raw key).
 func (g *Gateway) requireAPIKey(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if g.server != nil {
-			// APIKey is stored in Config; we check via a field comparison.
-		}
-		// Check API key from Config. Access the configured key.
-		// We store it separately since Config is not persisted on Gateway.
 		if g.apiKey != "" {
 			key := r.Header.Get("Authorization")
-			if key == "" {
-				key = r.URL.Query().Get("key")
-			}
 			if key != "Bearer "+g.apiKey && key != g.apiKey {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
@@ -145,7 +145,7 @@ func (g *Gateway) RegisterChannel(ch cobot.MessageChannel) error {
 		g.mu.Unlock()
 		return fmt.Errorf("channel %q is already registered", id)
 	}
-	g.registered[id] = struct{}{}
+	g.registered[id] = ch
 	g.mu.Unlock()
 
 	// Wire OnMessage → dedup → agent handler.
@@ -177,11 +177,10 @@ func (g *Gateway) RegisterChannel(ch cobot.MessageChannel) error {
 		}
 	})
 
-	// Mount webhook if HTTPChannel.
+	// Store webhook handler if HTTPChannel.
 	if hc, ok := ch.(cobot.HTTPChannel); ok {
-		pattern := "/webhook/" + id + "/"
-		g.mux.Handle(pattern, http.StripPrefix("/webhook/"+id, hc.HTTPHandler()))
-		slog.Info("gateway: mounted webhook", "channel", id, "pattern", pattern)
+		g.webhookHandlers[id] = hc.HTTPHandler()
+		slog.Info("gateway: registered webhook handler", "channel", id)
 	}
 
 	// Register in ChannelManager and mark as local so health check doesn't expire it.
@@ -196,19 +195,18 @@ func (g *Gateway) RegisterChannel(ch cobot.MessageChannel) error {
 // Only channels with the "gateway:" session prefix are removed.
 func (g *Gateway) UnregisterChannel(channelID string) bool {
 	g.mu.Lock()
-	if _, exists := g.registered[channelID]; !exists {
+	ch, exists := g.registered[channelID]
+	if !exists {
 		g.mu.Unlock()
 		return false
 	}
 	delete(g.registered, channelID)
+	delete(g.webhookHandlers, channelID)
 	g.mu.Unlock()
 
 	sessionID := "gateway:" + channelID
-	ch, ok := g.channelMgr.Get(channelID)
-	if ok {
-		ch.Close()
-	}
 	g.channelMgr.Unregister(channelID, sessionID)
+	ch.Close()
 	return true
 }
 
@@ -260,6 +258,29 @@ func (g *Gateway) Addr() string {
 func (g *Gateway) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("ok"))
+}
+
+// handleWebhook is a single dispatcher for all /webhook/{channelID}/ requests.
+// It routes to the appropriate channel's HTTPHandler at request time,
+// allowing safe unregister and re-register without ServeMux pattern conflicts.
+func (g *Gateway) handleWebhook(w http.ResponseWriter, r *http.Request) {
+	// Path is "/webhook/{channelID}/..." — extract channelID.
+	path := r.URL.Path
+	remainder := path[len("/webhook/"):]
+	idx := len(remainder)
+	if slashIdx := indexByte(remainder, '/'); slashIdx >= 0 {
+		idx = slashIdx
+	}
+	channelID := remainder[:idx]
+
+	handler, ok := g.webhookHandlers[channelID]
+	if !ok {
+		http.Error(w, "webhook not found", http.StatusNotFound)
+		return
+	}
+	// Strip the /webhook/{channelID} prefix before forwarding.
+	r.URL.Path = remainder[idx:]
+	handler.ServeHTTP(w, r)
 }
 
 func (g *Gateway) recordDedup(key string) bool {
@@ -396,28 +417,19 @@ func (g *Gateway) handleChannelMessages(w http.ResponseWriter, r *http.Request) 
 }
 
 func (g *Gateway) unregisterChannelAPI(w http.ResponseWriter, r *http.Request, channelID string) {
-	// Only unregister channels that were registered through the gateway.
 	sessionID := "gateway:" + channelID
-	g.mu.RLock()
-	_, isOurs := g.registered[channelID]
-	g.mu.RUnlock()
+	g.mu.Lock()
+	ch, isOurs := g.registered[channelID]
 	if !isOurs {
+		g.mu.RUnlock()
 		http.Error(w, "channel not found or not managed by gateway", http.StatusNotFound)
 		return
 	}
-
-	ch, ok := g.channelMgr.Get(channelID)
-	if !ok {
-		http.Error(w, "channel not found", http.StatusNotFound)
-		return
-	}
-	// Only close the channel we registered, not other sessions.
-	g.channelMgr.Unregister(channelID, sessionID)
-	ch.Close()
-
-	g.mu.Lock()
 	delete(g.registered, channelID)
 	g.mu.Unlock()
+
+	g.channelMgr.Unregister(channelID, sessionID)
+	ch.Close()
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -475,7 +487,12 @@ func (g *Gateway) sendChannelMessage(w http.ResponseWriter, r *http.Request, cha
 	}
 
 	if err := g.handler(r.Context(), msg, replyFunc); err != nil {
-		http.Error(w, fmt.Sprintf("handler error: %v", err), http.StatusInternalServerError)
+		slog.Error("gateway: sendChannelMessage handler failed",
+			"channel_id", channelID,
+			"chat_id", req.ChatID,
+			"error", err,
+		)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 

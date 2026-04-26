@@ -59,7 +59,15 @@ func (m *mockMessageChannel) HTTPHandler() http.Handler { return m.httpHandler }
 func (m *mockMessageChannel) getSent() []*cobot.OutboundMessage {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.sent
+	sent := make([]*cobot.OutboundMessage, len(m.sent))
+	for i, msg := range m.sent {
+		if msg == nil {
+			continue
+		}
+		copy := *msg
+		sent[i] = &copy
+	}
+	return sent
 }
 
 // simulateInbound triggers the OnMessage handler with a test message.
