@@ -442,20 +442,15 @@ func newSubAgent(a *agent.Agent, registry cobot.ModelResolver, filteredTools cob
 func ConfigureGateway(res *Result, cfg cobot.GatewayConfig) (*gateway.Gateway, error) {
 	subAgents := &sync.Map{}
 
+	registry := res.Agent.Registry()
+	filtered := res.Agent.ToolRegistry().Clone().Without("delegate_task")
+
 	handler := func(ctx context.Context, msg *cobot.InboundMessage, replyFunc gateway.ReplyFunc) error {
 		agentKey := msg.Platform + ":" + msg.ChatID
 
-		registry := res.Agent.Registry()
-		filtered := res.Agent.ToolRegistry().Clone().Without("delegate_task")
-
-		val, loaded := subAgents.Load(agentKey)
-		var sub *agent.Agent
-		if loaded {
-			sub = val.(*agent.Agent)
-		} else {
-			sub = newSubAgent(res.Agent, registry, filtered)
-			subAgents.Store(agentKey, sub)
-		}
+		candidate := newSubAgent(res.Agent, registry, filtered)
+		actual, _ := subAgents.LoadOrStore(agentKey, candidate)
+		sub := actual.(*agent.Agent)
 
 		resp, err := sub.Prompt(ctx, msg.Text)
 		if err != nil {

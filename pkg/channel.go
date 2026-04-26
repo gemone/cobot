@@ -118,7 +118,7 @@ func (b *BaseChannel) WithLock(fn func()) {
 // ErrNotSupported indicates the platform does not support the requested operation.
 var ErrNotSupported = errors.New("operation not supported by this platform")
 
-// PlatformAdapter abstracts a messaging platforms capabilities.
+// PlatformAdapter abstracts a messaging platform's capabilities.
 // Each platform (Feishu, Telegram, Discord) implements this interface.
 // Lifecycle: New -> Connect -> (send/recv loop) -> Disconnect
 type PlatformAdapter interface {

@@ -23,7 +23,10 @@ var gatewayCmd = &cobra.Command{
 			return err
 		}
 
-		gwAddr, _ := cmd.Flags().GetString("addr")
+		gwAddr, err := cmd.Flags().GetString("addr")
+		if err != nil {
+			return err
+		}
 		if gwAddr != "" {
 			cfg.Gateway.Addr = gwAddr
 		}

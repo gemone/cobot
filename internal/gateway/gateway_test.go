@@ -12,12 +12,12 @@ import (
 )
 
 type mockAdapter struct {
-	platform    string
-	handler     func(ctx context.Context, msg *cobot.InboundMessage)
-	httpHandler http.Handler
-	mu          sync.Mutex
-	sent        []*cobot.OutboundMessage
-	connected   bool
+	platform     string
+	handler      func(ctx context.Context, msg *cobot.InboundMessage)
+	httpHandler  http.Handler
+	mu           sync.Mutex
+	sent         []*cobot.OutboundMessage
+	connected    bool
 	disconnected bool
 }
 
@@ -175,7 +175,7 @@ func TestGatewayDedup(t *testing.T) {
 		Platform:  "testplat",
 		ChatID:    "chat1",
 		MessageID: "msg1",
-		Text:     "hello",
+		Text:      "hello",
 	}
 	mock.fireMessage(msg)
 
@@ -203,15 +203,15 @@ func TestGatewayMessageRouting(t *testing.T) {
 
 	inbound := &cobot.InboundMessage{
 		Platform:    "testplat",
-		ChatID:     "chat123",
-		ChatType:   "group",
-		SenderID:  "user456",
-		SenderName: "TestUser",
-		Text:      "hello world",
+		ChatID:      "chat123",
+		ChatType:    "group",
+		SenderID:    "user456",
+		SenderName:  "TestUser",
+		Text:        "hello world",
 		MessageType: "text",
-		MessageID:  "msg123",
-		ReplyToID:  "parent123",
-		Timestamp: time.Now(),
+		MessageID:   "msg123",
+		ReplyToID:   "parent123",
+		Timestamp:   time.Now(),
 	}
 
 	mock.fireMessage(inbound)

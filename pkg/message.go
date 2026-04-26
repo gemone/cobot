@@ -37,33 +37,33 @@ type Attachment struct {
 	Type     AttachmentType `json:"type,omitempty"`
 	Path     string         `json:"path,omitempty"`
 	URL      string         `json:"url,omitempty"`
-	Filename string        `json:"filename,omitempty"`
-	Caption  string        `json:"caption,omitempty"`
+	Filename string         `json:"filename,omitempty"`
+	Caption  string         `json:"caption,omitempty"`
 }
 
 type OutboundMessage struct {
-	ReceiveID    string       `json:"receive_id,omitempty"`
-	ReceiveType  string       `json:"receive_type,omitempty"`
-	Text         string       `json:"text,omitempty"`
-	RichContent  string       `json:"rich_content,omitempty"`
+	ReceiveID   string       `json:"receive_id,omitempty"`
+	ReceiveType string       `json:"receive_type,omitempty"`
+	Text        string       `json:"text,omitempty"`
+	RichContent string       `json:"rich_content,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
-	ReplyTo      string       `json:"reply_to,omitempty"`
-	UUID         string       `json:"uuid,omitempty"`
+	ReplyTo     string       `json:"reply_to,omitempty"`
+	UUID        string       `json:"uuid,omitempty"`
 }
 
 type InboundMessage struct {
-	Platform    string         `json:"platform,omitempty"`
-	ChatID      string         `json:"chat_id,omitempty"`
-	ChatType    string         `json:"chat_type,omitempty"`
-	SenderID    string         `json:"sender_id,omitempty"`
-	SenderName  string         `json:"sender_name,omitempty"`
-	Text        string         `json:"text,omitempty"`
-	MessageType string        `json:"message_type,omitempty"`
-	MediaURLs   []string      `json:"media_urls,omitempty"`
-	MediaTypes  []string      `json:"media_types,omitempty"`
-	ReplyToID   string        `json:"reply_to_id,omitempty"`
-	MessageID   string        `json:"message_id,omitempty"`
-	Timestamp   time.Time    `json:"timestamp,omitempty"`
+	Platform    string          `json:"platform,omitempty"`
+	ChatID      string          `json:"chat_id,omitempty"`
+	ChatType    string          `json:"chat_type,omitempty"`
+	SenderID    string          `json:"sender_id,omitempty"`
+	SenderName  string          `json:"sender_name,omitempty"`
+	Text        string          `json:"text,omitempty"`
+	MessageType string          `json:"message_type,omitempty"`
+	MediaURLs   []string        `json:"media_urls,omitempty"`
+	MediaTypes  []string        `json:"media_types,omitempty"`
+	ReplyToID   string          `json:"reply_to_id,omitempty"`
+	MessageID   string          `json:"message_id,omitempty"`
+	Timestamp   time.Time       `json:"timestamp,omitempty"`
 	Raw         json.RawMessage `json:"raw,omitempty"`
 }
 
