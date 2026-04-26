@@ -26,6 +26,7 @@ type Gateway struct {
 	adapters map[string]cobot.PlatformAdapter
 	handler  MessageHandler
 	listener net.Listener
+	listenerMu sync.Mutex
 
 	dedup   map[string]time.Time
 	dedupMu sync.Mutex
@@ -61,13 +62,19 @@ func (g *Gateway) RegisterAdapter(adapter cobot.PlatformAdapter) error {
 		return fmt.Errorf("adapter platform name must not be empty")
 	}
 	g.mu.Lock()
-	defer g.mu.Unlock()
 	if _, exists := g.adapters[platform]; exists {
+		g.mu.Unlock()
 		return fmt.Errorf("adapter for platform %q already registered", platform)
 	}
 
+	g.adapters[platform] = adapter
+	g.mu.Unlock()
+
 	adapter.OnMessage(func(ctx context.Context, msg *cobot.InboundMessage) {
-		dedupKey := msg.Platform + ":" + msg.MessageID
+		if msg.MessageID == "" {
+			return
+		}
+		dedupKey := platform + ":" + msg.MessageID
 		if !g.recordDedup(dedupKey) {
 			slog.Debug("gateway: skipping duplicate message", "platform", msg.Platform, "message_id", msg.MessageID)
 			return
@@ -89,6 +96,9 @@ func (g *Gateway) RegisterAdapter(adapter cobot.PlatformAdapter) error {
 
 	handler, err := adapter.Connect()
 	if err != nil {
+		g.mu.Lock()
+		delete(g.adapters, platform)
+		g.mu.Unlock()
 		return fmt.Errorf("adapter %q connect failed: %w", platform, err)
 	}
 	if handler != nil {
@@ -97,7 +107,9 @@ func (g *Gateway) RegisterAdapter(adapter cobot.PlatformAdapter) error {
 		slog.Info("gateway: registered webhook route", "platform", platform, "pattern", pattern)
 	}
 
+	g.mu.Lock()
 	g.adapters[platform] = adapter
+	g.mu.Unlock()
 	slog.Info("gateway: adapter registered", "platform", platform)
 	return nil
 }
@@ -107,7 +119,9 @@ func (g *Gateway) Start() error {
 	if err != nil {
 		return fmt.Errorf("gateway listen: %w", err)
 	}
+	g.listenerMu.Lock()
 	g.listener = ln
+	g.listenerMu.Unlock()
 	slog.Info("gateway: starting server", "addr", ln.Addr().String())
 	go func() {
 		if err := g.server.Serve(ln); err != nil && err != http.ErrServerClosed {
@@ -137,8 +151,11 @@ func (g *Gateway) Shutdown(ctx context.Context) error {
 }
 
 func (g *Gateway) Addr() string {
-	if g.listener != nil {
-		return g.listener.Addr().String()
+	g.listenerMu.Lock()
+	listener := g.listener
+	g.listenerMu.Unlock()
+	if listener != nil {
+		return listener.Addr().String()
 	}
 	return g.server.Addr
 }

@@ -137,7 +137,7 @@ type PlatformAdapter interface {
 	Send(ctx context.Context, msg *OutboundMessage) (*SendResult, error)
 
 	// EditMessage updates a previously sent message (for pseudo-streaming).
-	// Platforms that dont support editing should return nil, ErrNotSupported.
+	// Platforms that don't support editing should return nil, ErrNotSupported.
 	EditMessage(ctx context.Context, chatID, messageID, content string) (*SendResult, error)
 
 	// OnMessage registers the inbound message callback. Must be called before Connect.

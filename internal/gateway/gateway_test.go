@@ -82,7 +82,7 @@ func TestGatewayRegisterAdapter(t *testing.T) {
 }
 
 func TestGatewayStartShutdown(t *testing.T) {
-	gw := New(Config{Addr: ":0"}, nil)
+	gw := New(Config{Addr: "127.0.0.1:0"}, nil)
 
 	err := gw.Start()
 	if err != nil {
@@ -91,8 +91,8 @@ func TestGatewayStartShutdown(t *testing.T) {
 	defer gw.Shutdown(context.Background())
 
 	addr := gw.Addr()
-	if addr == ":0" {
-		t.Error("Addr should not be :0 after start")
+	if addr == "127.0.0.1:0" {
+		t.Error("Addr should not be 127.0.0.1:0 after start")
 	}
 	if addr == "" {
 		t.Error("Addr should not be empty")
@@ -100,7 +100,7 @@ func TestGatewayStartShutdown(t *testing.T) {
 }
 
 func TestGatewayHealthEndpoint(t *testing.T) {
-	gw := New(Config{Addr: ":0"}, nil)
+	gw := New(Config{Addr: "127.0.0.1:0"}, nil)
 
 	err := gw.Start()
 	if err != nil {
@@ -131,7 +131,7 @@ func TestGatewayWebhookRouting(t *testing.T) {
 			w.Write([]byte("hello"))
 		}),
 	}
-	gw := New(Config{Addr: ":0"}, nil)
+	gw := New(Config{Addr: "127.0.0.1:0"}, nil)
 
 	err := gw.RegisterAdapter(mock)
 	if err != nil {

@@ -16,7 +16,7 @@ type Config struct {
 	Memory       MemoryConfig              `yaml:"memory,omitempty"`
 	Session      SessionConfig             `yaml:"session,omitempty"`
 	Channels     []ChannelConfig           `yaml:"channels,omitempty"`
-	Gateway     GatewayConfig            `yaml:"gateway,omitempty"`
+	Gateway      GatewayConfig             `yaml:"gateway,omitempty"`
 }
 
 // ChannelConfig defines a named communication channel.
