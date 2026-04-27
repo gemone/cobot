@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/skip2/go-qrcode"
 	"github.com/spf13/cobra"
 
 	"github.com/cobot-agent/cobot/internal/channel"
@@ -58,10 +59,19 @@ func runSetupFeishu(cmd *cobra.Command) error {
 			fmt.Printf("  ⚠ QR flow unavailable: %v\n", err)
 			fmt.Println("  Falling back to manual input...")
 		} else {
-			fmt.Println()
-			fmt.Println("  Scan the QR code with your Feishu / Lark mobile app:")
-			fmt.Println()
-			fmt.Printf("  %s\n", qrURL)
+			// Generate ASCII QR code.
+			qr, err := qrcode.New(qrURL, qrcode.Medium)
+			if err == nil {
+				fmt.Println()
+				fmt.Println("  Scan the QR code with your Feishu / Lark mobile app:")
+				fmt.Println()
+				fmt.Print(qr.ToString(false))
+			} else {
+				fmt.Println()
+				fmt.Println("  Scan the QR code with your Feishu / Lark mobile app:")
+				fmt.Println()
+				fmt.Printf("  %s\n", qrURL)
+			}
 			fmt.Println()
 			fmt.Println("  Or open the URL above in your mobile browser.")
 			fmt.Println()
