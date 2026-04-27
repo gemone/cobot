@@ -39,6 +39,8 @@ func (m *mockMessageChannel) OnMessage(handler func(ctx context.Context, msg *co
 	m.handler = handler
 }
 
+func (m *mockMessageChannel) OnEvent(handler func(ctx context.Context, event *cobot.ChannelEvent)) {}
+
 func (m *mockMessageChannel) SendMessage(ctx context.Context, msg *cobot.OutboundMessage) (*cobot.SendResult, error) {
 	m.mu.Lock()
 	m.sent = append(m.sent, msg)

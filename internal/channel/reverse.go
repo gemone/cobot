@@ -50,6 +50,10 @@ func (ch *ReverseChannel) OnMessage(handler func(ctx context.Context, msg *cobot
 	ch.handlerMu.Unlock()
 }
 
+// OnEvent registers a callback for channel system events.
+// ReverseChannel does not emit events, so this is a no-op.
+func (ch *ReverseChannel) OnEvent(handler func(ctx context.Context, event *cobot.ChannelEvent)) {}
+
 // SendMessage POSTs the outbound message to the callback URL.
 func (ch *ReverseChannel) SendMessage(ctx context.Context, msg *cobot.OutboundMessage) (*cobot.SendResult, error) {
 	if !ch.IsAlive() {

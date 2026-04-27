@@ -37,6 +37,9 @@ type FeishuChannel struct {
 
 	handler   func(ctx context.Context, msg *cobot.InboundMessage)
 	handlerMu sync.RWMutex
+
+	eventHandler   func(ctx context.Context, event *cobot.ChannelEvent)
+	eventHandlerMu sync.RWMutex
 }
 
 // NewFeishuChannel creates a FeishuChannel with the given ID and config.
@@ -48,7 +51,12 @@ func NewFeishuChannel(id string, cfg FeishuConfig) *FeishuChannel {
 		client:      lark.NewClient(cfg.AppID, cfg.AppSecret),
 	}
 	ch.dispatcher = larkdispatch.NewEventDispatcher("", "").
-		OnP2MessageReceiveV1(ch.handleReceive)
+		OnP2MessageReceiveV1(ch.handleReceive).
+		OnP2MessageReactionCreatedV1(ch.handleReactionCreated).
+		OnP2MessageReactionDeletedV1(ch.handleReactionDeleted).
+		OnP2MessageRecalledV1(ch.handleMessageRecalled).
+		OnP2ChatMemberUserAddedV1(ch.handleMemberAdded).
+		OnP2ChatMemberUserDeletedV1(ch.handleMemberRemoved)
 	ch.wsClient = ws.NewClient(cfg.AppID, cfg.AppSecret, ws.WithEventHandler(ch.dispatcher))
 	return ch
 }
@@ -400,10 +408,136 @@ func formatTextContent(text string) string {
 	return string(data)
 }
 
+// OnEvent registers a callback for Feishu system events.
+func (ch *FeishuChannel) OnEvent(handler func(ctx context.Context, event *cobot.ChannelEvent)) {
+	ch.eventHandlerMu.Lock()
+	ch.eventHandler = handler
+	ch.eventHandlerMu.Unlock()
+}
+
+func (ch *FeishuChannel) dispatchEvent(ctx context.Context, event *cobot.ChannelEvent) {
+	ch.eventHandlerMu.RLock()
+	h := ch.eventHandler
+	ch.eventHandlerMu.RUnlock()
+	if h != nil {
+		h(ctx, event)
+	}
+}
+
+func (ch *FeishuChannel) handleReactionCreated(ctx context.Context, event *larkim.P2MessageReactionCreatedV1) error {
+	if event == nil || event.Event == nil {
+		return nil
+	}
+	e := event.Event
+	ch.dispatchEvent(ctx, &cobot.ChannelEvent{
+		Type:         cobot.ChannelEventMessageReaction,
+		Platform:     "feishu",
+		Timestamp:    ptrStr(e.ActionTime),
+		ChatID:       "", // reaction events don't include ChatId in this SDK version
+		MessageID:    ptrStr(e.MessageId),
+		UserID:       ptrStrUserId(e.UserId),
+		ReactionType: ptrStrEmoji(e.ReactionType),
+	})
+	return nil
+}
+
+func (ch *FeishuChannel) handleReactionDeleted(ctx context.Context, event *larkim.P2MessageReactionDeletedV1) error {
+	if event == nil || event.Event == nil {
+		return nil
+	}
+	e := event.Event
+	ch.dispatchEvent(ctx, &cobot.ChannelEvent{
+		Type:         cobot.ChannelEventMessageReaction,
+		Platform:     "feishu",
+		Timestamp:    ptrStr(e.ActionTime),
+		ChatID:       "",
+		MessageID:    ptrStr(e.MessageId),
+		UserID:       ptrStrUserId(e.UserId),
+		ReactionType: ptrStrEmoji(e.ReactionType),
+	})
+	return nil
+}
+
+func (ch *FeishuChannel) handleMessageRecalled(ctx context.Context, event *larkim.P2MessageRecalledV1) error {
+	if event == nil || event.Event == nil {
+		return nil
+	}
+	e := event.Event
+	ch.dispatchEvent(ctx, &cobot.ChannelEvent{
+		Type:      cobot.ChannelEventMessageRecalled,
+		Platform:  "feishu",
+		Timestamp: ptrStr(e.RecallTime),
+		ChatID:    ptrStr(e.ChatId),
+		MessageID: ptrStr(e.MessageId),
+		UserID:    "", // OperatorId not available in this event data
+	})
+	return nil
+}
+
+func (ch *FeishuChannel) handleMemberAdded(ctx context.Context, event *larkim.P2ChatMemberUserAddedV1) error {
+	if event == nil || event.Event == nil {
+		return nil
+	}
+	e := event.Event
+	memberID := ptrStrUserId(e.OperatorId)
+	ch.dispatchEvent(ctx, &cobot.ChannelEvent{
+		Type:      cobot.ChannelEventMemberJoined,
+		Platform:  "feishu",
+		Timestamp: "",
+		ChatID:    ptrStr(e.ChatId),
+		UserID:    memberID,
+		MemberID:  memberID,
+	})
+	return nil
+}
+
+func (ch *FeishuChannel) handleMemberRemoved(ctx context.Context, event *larkim.P2ChatMemberUserDeletedV1) error {
+	if event == nil || event.Event == nil {
+		return nil
+	}
+	e := event.Event
+	memberID := ptrStrUserId(e.OperatorId)
+	ch.dispatchEvent(ctx, &cobot.ChannelEvent{
+		Type:      cobot.ChannelEventMemberLeft,
+		Platform:  "feishu",
+		Timestamp: "",
+		ChatID:    ptrStr(e.ChatId),
+		UserID:    memberID,
+		MemberID:  memberID,
+	})
+	return nil
+}
+
 // ptrStr safely dereferences a *string, returning "" for nil.
 func ptrStr(s *string) string {
 	if s == nil {
 		return ""
 	}
 	return *s
+}
+
+// ptrStrUserId extracts the user_id string from a *UserId pointer.
+// Prefers OpenId if available, falls back to UserId.
+func ptrStrUserId(u *larkim.UserId) string {
+	if u == nil {
+		return ""
+	}
+	if u.OpenId != nil && *u.OpenId != "" {
+		return *u.OpenId
+	}
+	if u.UserId != nil {
+		return *u.UserId
+	}
+	if u.UnionId != nil {
+		return *u.UnionId
+	}
+	return ""
+}
+
+// ptrStrEmoji extracts the emoji type string from an *Emoji.
+func ptrStrEmoji(e *larkim.Emoji) string {
+	if e == nil || e.EmojiType == nil {
+		return ""
+	}
+	return *e.EmojiType
 }
