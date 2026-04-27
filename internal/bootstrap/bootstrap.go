@@ -459,7 +459,7 @@ func ConfigureGateway(res *Result, cfg cobot.GatewayConfig) (*gateway.Gateway, e
 		return nil
 	}
 
-	gw := gateway.New(gateway.Config{Addr: cfg.Addr}, res.ChannelMgr, handler)
+	gw := gateway.New(gateway.Config{Addr: cfg.Addr, APIKey: cfg.APIKey}, res.ChannelMgr, handler)
 
 	// RegisterChannelFunc is set by channel implementation packages
 	// (feishu, reverse, etc.) when they are imported. This decouples

@@ -58,7 +58,8 @@ type SessionConfig struct {
 
 // GatewayConfig holds gateway server settings.
 type GatewayConfig struct {
-	Addr string `yaml:"addr,omitempty"`
+	Addr   string `yaml:"addr,omitempty"`
+	APIKey string `yaml:"api_key,omitempty"`
 }
 
 type ProviderConfig struct {
