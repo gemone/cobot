@@ -196,8 +196,12 @@ func (g *Gateway) RegisterChannel(ch cobot.MessageChannel) error {
 
 		if g.handler != nil {
 			lastSentID := ""
+			replyToID := ""
 			// Wrap replyFunc to capture the last successful message ID for completion reaction.
 			replyWithCapture := func(out *cobot.OutboundMessage) (*cobot.SendResult, error) {
+				if out.ReplyToMessageID != "" {
+					replyToID = out.ReplyToMessageID
+				}
 				result, err := replyFunc(out)
 				if err == nil && result != nil && result.MessageID != "" {
 					lastSentID = result.MessageID
@@ -208,10 +212,17 @@ func (g *Gateway) RegisterChannel(ch cobot.MessageChannel) error {
 				slog.Error("gateway: message handler error", "channel", id, "error", err)
 			}
 			// Add completion reaction after streaming finishes.
-			if lastSentID != "" {
+			// Prefer the message we were replying to; otherwise use the last sent message.
+			// This ensures the reaction lands on the user's original message (for reply-to)
+			// or on our own message (for standalone), never on a message that isn't ours.
+			targetID := replyToID
+			if targetID == "" {
+				targetID = lastSentID
+			}
+			if targetID != "" {
 				if r, ok := interface{}(ch).(cobot.Reactioner); ok {
 					go func() {
-						_ = r.ReactMessage(context.Background(), lastSentID, "OK")
+						_ = r.ReactMessage(context.Background(), targetID, "OK")
 					}()
 				}
 			}
