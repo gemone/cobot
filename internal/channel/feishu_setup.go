@@ -1,6 +1,8 @@
 package channel
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -33,6 +35,32 @@ var feishuOpenURLs = map[string]string{
 }
 
 const feishuRegistrationPath = "/oauth/v1/app/registration"
+
+// GenerateVerificationToken creates a random 32-byte token for Feishu event subscription.
+func GenerateVerificationToken() string {
+	b := make([]byte, 32)
+	_, _ = rand.Read(b)
+	return base64.URLEncoding.EncodeToString(b)
+}
+
+// GenerateEncryptKey creates a random 32-byte AES key for Feishu event encryption.
+// Returns a base64-encoded string usable as the encrypt key.
+func GenerateEncryptKey() string {
+	b := make([]byte, 32)
+	_, _ = rand.Read(b)
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+// ComputeWebhookURL returns the webhook URL that Feishu should use for event callbacks.
+// gatewayAddr should be the address the gateway is listening on (e.g. ":8080" or "example.com:8080").
+func ComputeWebhookURL(gatewayAddr, channelName string) string {
+	// Strip leading colon for host part if it's just a port.
+	host := gatewayAddr
+	if strings.HasPrefix(host, ":") {
+		host = "localhost" + host
+	}
+	return fmt.Sprintf("https://%s/webhook/feishu/%s", host, channelName)
+}
 
 // httpClient is a shared client with a 15-second timeout for all Feishu API calls.
 var httpClient = &http.Client{Timeout: 15 * time.Second}
