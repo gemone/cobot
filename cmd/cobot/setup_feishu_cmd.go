@@ -167,43 +167,15 @@ func runSetupFeishu(cmd *cobra.Command) error {
 	fmt.Println()
 	fmt.Printf("  ✅ Feishu channel %q saved to %s\n", channelName, configPath)
 	fmt.Println()
-
-	// Ask for gateway address and auto-generate tokens.
-	fmt.Println("  ── Gateway Configuration ──")
+	fmt.Println("  ── WebSocket Mode ──")
 	fmt.Println()
-	fmt.Print("  Gateway address (e.g. :8080 or mybot.com:8080) [press Enter for :8080]: ")
-	gatewayAddr, _ := reader.ReadString('\n')
-	gatewayAddr = strings.TrimSpace(gatewayAddr)
-	if gatewayAddr == "" {
-		gatewayAddr = ":8080"
-	}
-
-	cfg.VerificationToken = channel.GenerateVerificationToken()
-	cfg.EncryptKey = channel.GenerateEncryptKey()
-	webhookURL := channel.ComputeWebhookURL(gatewayAddr, channelName)
-
-	fmt.Println()
-	fmt.Println("  ✅ Generated security credentials (saved to config above):")
-	fmt.Printf("     Verification Token: %s\n", cfg.VerificationToken)
-	fmt.Printf("     Encrypt Key:       %s\n", cfg.EncryptKey)
-	fmt.Println()
-	fmt.Println("  ╔═══════════════════════════════════════════════════════════════╗")
-	fmt.Printf("  ║  📡 Webhook URL (set this in Feishu Open Platform):         ║\n")
-	fmt.Printf("  ║                                                              ║\n")
-	fmt.Printf("  ║  %s\n", webhookURL)
-	fmt.Printf("  ║                                                              ║")
-	fmt.Println()
-	fmt.Println("  ╚═══════════════════════════════════════════════════════════════╝")
+	fmt.Println("  Feishu will connect to your bot via WebSocket — no public URL required.")
 	fmt.Println()
 	fmt.Println("  Next steps:")
-	fmt.Println("  1. Go to Feishu Open Platform → Events & Callbacks → Request URL")
-	fmt.Printf("     Paste the webhook URL above and press Enter.\n")
-	fmt.Println("  2. Enter the Verification Token when prompted by Feishu.")
-	fmt.Println("  3. Enable AES encryption and paste the Encrypt Key.")
-	fmt.Println("  4. Enable the \"Receive Messages\" event subscription.")
-	fmt.Println()
-	fmt.Println("  5. Run the gateway:")
-	fmt.Printf("       cobot gateway --addr %s\n", gatewayAddr)
+	fmt.Println("  1. In Feishu Open Platform, go to Event Subscriptions")
+	fmt.Println("     and enable the \"Receive Messages\" event.")
+	fmt.Println("  2. Run the gateway:")
+	fmt.Println("       cobot gateway --addr :8080")
 	fmt.Println()
 	return nil
 }

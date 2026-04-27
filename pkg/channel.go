@@ -137,6 +137,11 @@ type MessageChannel interface {
 	// EditMessage updates a previously sent message (for pseudo-streaming).
 	// Platforms that don't support editing should return nil, ErrNotSupported.
 	EditMessage(ctx context.Context, chatID, messageID, content string) (*SendResult, error)
+
+	// Start initiates the channel's connection (e.g. WebSocket handshake).
+	// It is called by the Gateway after RegisterChannel, before processing messages.
+	// For channels that don't need explicit startup (e.g. Reverse), this is a no-op.
+	Start(ctx context.Context) error
 }
 
 // HTTPChannel is an optional extension of MessageChannel that provides a

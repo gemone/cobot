@@ -167,6 +167,12 @@ func (g *Gateway) RegisterChannel(ch cobot.MessageChannel) error {
 		}
 	})
 
+	// Start the channel's connection (e.g. WebSocket for Feishu).
+	if err := ch.Start(context.Background()); err != nil {
+		ch.Close()
+		return fmt.Errorf("start channel %q: %w", id, err)
+	}
+
 	// Store webhook handler if HTTPChannel.
 	if hc, ok := ch.(cobot.HTTPChannel); ok {
 		g.mu.Lock()

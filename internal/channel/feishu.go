@@ -5,37 +5,38 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"strings"
 	"sync"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkdispatch "github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
-	larkhttp "github.com/larksuite/oapi-sdk-go/v3/core/httpserverext"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"github.com/larksuite/oapi-sdk-go/v3/ws"
 
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
 // FeishuConfig holds Feishu-specific credentials and settings.
 type FeishuConfig struct {
-	AppID             string
-	AppSecret         string
-	VerificationToken string
-	EncryptKey        string
+	AppID     string
+	AppSecret string
+	Domain    string // "feishu" or "lark"
 }
 
-// FeishuChannel implements cobot.HTTPChannel for Feishu/Lark bots.
-// It receives messages via webhook and sends replies through the Lark IM API.
+// FeishuChannel implements cobot.MessageChannel for Feishu/Lark bots.
+// It receives messages via WebSocket long connection and sends replies through the Lark IM API.
 type FeishuChannel struct {
 	*cobot.BaseChannel
 	platform string
-	config   FeishuConfig
-	client   *lark.Client
+	config  FeishuConfig
+	client  *lark.Client
 
-	handler     func(ctx context.Context, msg *cobot.InboundMessage)
-	handlerMu   sync.RWMutex
-	httpHandler http.Handler
+	dispatcher *larkdispatch.EventDispatcher
+	wsClient   *ws.Client
+	bgWg      sync.WaitGroup
+
+	handler   func(ctx context.Context, msg *cobot.InboundMessage)
+	handlerMu sync.RWMutex
 }
 
 // NewFeishuChannel creates a FeishuChannel with the given ID and config.
@@ -46,7 +47,9 @@ func NewFeishuChannel(id string, cfg FeishuConfig) *FeishuChannel {
 		config:      cfg,
 		client:      lark.NewClient(cfg.AppID, cfg.AppSecret),
 	}
-	ch.buildHTTPHandler()
+	ch.dispatcher = larkdispatch.NewEventDispatcher("", "").
+		OnP2MessageReceiveV1(ch.handleReceive)
+	ch.wsClient = ws.NewClient(cfg.AppID, cfg.AppSecret, ws.WithEventHandler(ch.dispatcher))
 	return ch
 }
 
@@ -59,19 +62,23 @@ func (ch *FeishuChannel) OnMessage(handler func(ctx context.Context, msg *cobot.
 	ch.handlerMu.Unlock()
 }
 
-// HTTPHandler returns the webhook handler for the Lark event dispatcher.
-func (ch *FeishuChannel) HTTPHandler() http.Handler {
-	return ch.httpHandler
+// Start implements MessageChannel. It initiates the WebSocket long connection.
+func (ch *FeishuChannel) Start(ctx context.Context) error {
+	slog.Info("feishu: starting websocket connection", "channel", ch.ID())
+	ch.bgWg.Add(1)
+	go func() {
+		defer ch.bgWg.Done()
+		_ = ch.wsClient.Start(ctx)
+	}()
+	return nil
 }
 
-// buildHTTPHandler creates the Lark SDK event dispatcher and wraps it as http.Handler.
-func (ch *FeishuChannel) buildHTTPHandler() {
-	dispatcher := larkdispatch.NewEventDispatcher(ch.config.VerificationToken, ch.config.EncryptKey).
-		OnP2MessageReceiveV1(ch.handleReceive)
-
-	// larkhttp.NewEventHandlerFunc returns func(w http.ResponseWriter, r *http.Request)
-	fn := larkhttp.NewEventHandlerFunc(dispatcher)
-	ch.httpHandler = http.HandlerFunc(fn)
+// Close shuts down the FeishuChannel.
+func (ch *FeishuChannel) Close() {
+	if ch.BaseChannel.TryClose() {
+		ch.bgWg.Wait()
+		slog.Info("feishu: channel closed", "channel", ch.ID())
+	}
 }
 
 // handleReceive is the Lark SDK callback for incoming messages.
@@ -241,19 +248,10 @@ func (ch *FeishuChannel) EditMessage(ctx context.Context, chatID, messageID, con
 }
 
 // Send delivers a notification via the generic Channel interface.
-// Feishu does not currently support notification delivery through Send.
+// Feishu WS mode does not support push notifications without a target chat.
 func (ch *FeishuChannel) Send(ctx context.Context, msg cobot.ChannelMessage) error {
-	// Notification delivery is not the primary use case for Feishu.
-	// This is used for cron results etc. — requires a default chat ID.
 	slog.Warn("feishu: Send (notification) called but no default chat configured", "channel", ch.ID())
 	return cobot.ErrNotSupported
-}
-
-// Close shuts down the FeishuChannel.
-func (ch *FeishuChannel) Close() {
-	if ch.BaseChannel.TryClose() {
-		slog.Info("feishu: channel closed", "channel", ch.ID())
-	}
 }
 
 // buildPostPayload converts markdown text to Feishu post JSON format.

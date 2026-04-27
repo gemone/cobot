@@ -89,6 +89,11 @@ func (ch *ReverseChannel) EditMessage(ctx context.Context, chatID, messageID, co
 	return nil, cobot.ErrNotSupported
 }
 
+// Start is a no-op for ReverseChannel since it has no persistent connection.
+func (ch *ReverseChannel) Start(ctx context.Context) error {
+	return nil
+}
+
 // Send delivers a notification (Channel interface) via the callback URL.
 func (ch *ReverseChannel) Send(ctx context.Context, msg cobot.ChannelMessage) error {
 	out := &cobot.OutboundMessage{

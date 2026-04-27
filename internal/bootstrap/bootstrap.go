@@ -512,10 +512,9 @@ func createChannel(cfg cobot.ChannelConfig) (cobot.MessageChannel, error) {
 	switch cfg.Type {
 	case "feishu":
 		fc := channel.FeishuConfig{
-			AppID:             cfg.Config["app_id"],
-			AppSecret:         cfg.Config["app_secret"],
-			VerificationToken: cfg.Config["verification_token"],
-			EncryptKey:        cfg.Config["encrypt_key"],
+			AppID:     cfg.Config["app_id"],
+			AppSecret: cfg.Config["app_secret"],
+			Domain:    cfg.Config["domain"],
 		}
 		if fc.AppID == "" || fc.AppSecret == "" {
 			return nil, fmt.Errorf("feishu channel %q: app_id and app_secret are required", cfg.Name)
