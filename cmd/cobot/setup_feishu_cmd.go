@@ -60,22 +60,21 @@ func runSetupFeishu(cmd *cobra.Command) error {
 			fmt.Println("  Falling back to manual input...")
 		} else {
 			// Generate ASCII QR code.
+			fmt.Println()
+			fmt.Println("  Scan the QR code with your Feishu / Lark mobile app:")
+			fmt.Println()
 			qr, err := qrcode.New(qrURL, qrcode.Medium)
 			if err == nil {
-				fmt.Println()
-				fmt.Println("  Scan the QR code with your Feishu / Lark mobile app:")
-				fmt.Println()
 				fmt.Print(qr.ToString(false))
 			} else {
-				fmt.Println()
-				fmt.Println("  Scan the QR code with your Feishu / Lark mobile app:")
-				fmt.Println()
-				fmt.Printf("  %s\n", qrURL)
+				// Fallback: display QR as ASCII art failed, show URL only.
+				fmt.Printf("  [QR generation failed — open URL below]\n\n")
 			}
 			fmt.Println()
-			fmt.Println("  Or open the URL above in your mobile browser.")
+			fmt.Println("  Or open this URL in your mobile browser:")
+			fmt.Printf("  %s\n", qrURL)
 			fmt.Println()
-			fmt.Print("  Waiting for scan... (Ctrl+C to cancel) ")
+			fmt.Println("  Waiting for scan... (Ctrl+C to cancel) ")
 
 			cfg, err = channel.PollAfterQR(domain, deviceCode, interval, expireIn)
 			if err != nil {
