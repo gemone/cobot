@@ -42,8 +42,8 @@ func NewReverseChannel(id, callbackURL, secret string) *ReverseChannel {
 func (ch *ReverseChannel) Platform() string { return ch.platform }
 
 // OnMessage registers the inbound message callback.
-// For ReverseChannel, messages arrive via the Gateway REST API,
-// not via webhook. This handler is called by sendChannelMessage.
+// For ReverseChannel, inbound messages are handled via the Gateway REST API;
+// they are not delivered through the outbound callback flow implemented here.
 func (ch *ReverseChannel) OnMessage(handler func(ctx context.Context, msg *cobot.InboundMessage)) {
 	ch.handlerMu.Lock()
 	ch.handler = handler
@@ -80,7 +80,7 @@ func (ch *ReverseChannel) SendMessage(ctx context.Context, msg *cobot.OutboundMe
 		return &cobot.SendResult{Success: false}, fmt.Errorf("reverse callback returned status %d", resp.StatusCode)
 	}
 
-	slog.Debug("reverse: message forwarded", "channel", ch.ID(), "url", ch.callbackURL)
+	slog.Debug("reverse: message forwarded", "channel", ch.ID(), "callback_host", req.URL.Host)
 	return &cobot.SendResult{Success: true}, nil
 }
 

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -484,6 +485,27 @@ func ConfigureGateway(res *Result, gwCfg cobot.GatewayConfig, channels []cobot.C
 	return gw, nil
 }
 
+// channelIDRegex enforces the format accepted by gateway.RegisterChannel.
+var channelIDRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9\-:_.]*$`)
+
+// sanitizeChannelID returns a valid channel ID from cfg.Name,
+// or an error if cfg.Name cannot be converted.
+func sanitizeChannelID(cfgName, prefix string) (string, error) {
+	// Lowercase and remove any characters not in the allowed set.
+	sanitized := strings.ToLower(cfgName)
+	sanitized = regexp.MustCompile(`[^a-z0-9\-:_.]`).ReplaceAllString(sanitized, "")
+	// Ensure it doesn't start with a reserved character.
+	sanitized = strings.TrimLeft(sanitized, "-_.")
+	if sanitized == "" {
+		return "", fmt.Errorf("channel name %q produces an empty ID after sanitization", cfgName)
+	}
+	// Verify it now matches the full format.
+	if !channelIDRegex.MatchString(prefix+sanitized) {
+		return "", fmt.Errorf("channel name %q cannot be used as a channel ID (got %q)", cfgName, prefix+sanitized)
+	}
+	return prefix + sanitized, nil
+}
+
 // createChannel creates a MessageChannel from a ChannelConfig.
 func createChannel(cfg cobot.ChannelConfig) (cobot.MessageChannel, error) {
 	switch cfg.Type {
@@ -497,13 +519,21 @@ func createChannel(cfg cobot.ChannelConfig) (cobot.MessageChannel, error) {
 		if fc.AppID == "" || fc.AppSecret == "" {
 			return nil, fmt.Errorf("feishu channel %q: app_id and app_secret are required", cfg.Name)
 		}
-		return channel.NewFeishuChannel("feishu:"+cfg.Name, fc), nil
+		id, err := sanitizeChannelID(cfg.Name, "feishu:")
+		if err != nil {
+			return nil, fmt.Errorf("feishu channel %q: %w", cfg.Name, err)
+		}
+		return channel.NewFeishuChannel(id, fc), nil
 	case "reverse":
 		callbackURL := cfg.Config["callback_url"]
 		if callbackURL == "" {
 			return nil, fmt.Errorf("reverse channel %q: callback_url is required", cfg.Name)
 		}
-		return channel.NewReverseChannel("reverse:"+cfg.Name, callbackURL, cfg.Config["secret"]), nil
+		id, err := sanitizeChannelID(cfg.Name, "reverse:")
+		if err != nil {
+			return nil, fmt.Errorf("reverse channel %q: %w", cfg.Name, err)
+		}
+		return channel.NewReverseChannel(id, callbackURL, cfg.Config["secret"]), nil
 	default:
 		return nil, fmt.Errorf("unknown channel type %q", cfg.Type)
 	}

@@ -2,6 +2,7 @@ package channel
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -172,8 +173,8 @@ func (ch *FeishuChannel) EditMessage(ctx context.Context, chatID, messageID, con
 	return &cobot.SendResult{Success: true, MessageID: messageID}, nil
 }
 
-// Send delivers a notification (Channel interface) via Feishu.
-// Uses the default_chat_id if set, otherwise logs a warning.
+// Send delivers a notification via the generic Channel interface.
+// Feishu does not currently support notification delivery through Send.
 func (ch *FeishuChannel) Send(ctx context.Context, msg cobot.ChannelMessage) error {
 	// Notification delivery is not the primary use case for Feishu.
 	// This is used for cron results etc. — requires a default chat ID.
@@ -190,13 +191,9 @@ func (ch *FeishuChannel) Close() {
 
 // formatTextContent wraps plain text into the JSON format expected by Feishu.
 func formatTextContent(text string) string {
-	// Feishu text message content is JSON: {"text": "content"}
-	// Escape special characters for JSON.
-	escaped := strings.ReplaceAll(text, `\`, `\\`)
-	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
-	escaped = strings.ReplaceAll(escaped, "\n", `\n`)
-	escaped = strings.ReplaceAll(escaped, "\t", `\t`)
-	return fmt.Sprintf(`{"text":"%s"}`, escaped)
+	payload := map[string]string{"text": text}
+	data, _ := json.Marshal(payload) // json.Marshal always succeeds for a flat map
+	return string(data)
 }
 
 // ptrStr safely dereferences a *string, returning "" for nil.

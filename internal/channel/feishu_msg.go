@@ -1,12 +1,14 @@
 package channel
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // ExtractTextContent parses the content field of a Feishu message event.
 // The content is a JSON string whose structure depends on message_type:
 //   - text:      {"text": "hello"}
 //   - post:      {"title":"...","content":[[{"tag":"text","text":"..."}]]}
-//   - interactive: {"elements":[...]} (extract text from elements)
 func ExtractTextContent(raw string) string {
 	if raw == "" {
 		return ""
@@ -57,12 +59,12 @@ func extractPostText(postMsg struct {
 			}
 		}
 	}
-	result := ""
+	result := &strings.Builder{}
 	for i, p := range parts {
 		if i > 0 {
-			result += " "
+			result.WriteString(" ")
 		}
-		result += p
+		result.WriteString(p)
 	}
-	return result
+	return result.String()
 }
