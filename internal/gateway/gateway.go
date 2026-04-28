@@ -338,19 +338,27 @@ func (g *Gateway) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	handler.ServeHTTP(w, r)
 }
 
+// Deduper tracks processed message keys to prevent duplicate handling.
+type Deduper interface {
+	// Record reports whether the key was already known.
+	// Returns true if this is the first time; false if duplicate.
+	Record(key string) bool
+}
+
+// recordDedup reports whether the given key has been seen before.
+// It is called with dedupMu held by the caller.
 func (g *Gateway) recordDedup(key string) bool {
-	g.dedupMu.Lock()
-	defer g.dedupMu.Unlock()
 	now := time.Now()
+	// Prune entries older than 30 minutes on first call each minute.
 	if now.Sub(g.dedupLastPrune) > time.Minute {
+		g.dedupLastPrune = now
 		for k, t := range g.dedup {
 			if now.Sub(t) > 30*time.Minute {
 				delete(g.dedup, k)
 			}
 		}
-		g.dedupLastPrune = now
 	}
-	if _, exists := g.dedup[key]; exists {
+	if _, seen := g.dedup[key]; seen {
 		return false
 	}
 	g.dedup[key] = now
