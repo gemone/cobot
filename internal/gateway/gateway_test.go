@@ -425,9 +425,9 @@ func TestGatewayRegisterReverseChannel(t *testing.T) {
 	if result["id"] != "rev-ch" {
 		t.Fatalf("expected id 'rev-ch', got %v", result["id"])
 	}
-	// mock channel implements HTTPChannel, so webhook should be present
+	// mock channel implements webhookProvider, so webhook should be present
 	if _, hasWebhook := result["webhook"]; !hasWebhook {
-		t.Fatal("expected webhook field for HTTPChannel mock")
+		t.Fatal("expected webhook field for webhookProvider mock")
 	}
 }
 

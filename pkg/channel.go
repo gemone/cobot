@@ -3,7 +3,6 @@ package cobot
 import (
 	"context"
 	"errors"
-	"net/http"
 	"sync"
 )
 
@@ -167,14 +166,4 @@ type Reactioner interface {
 	// ReactMessage adds a reaction emoji to a message. The reactionType
 	// is a Unicode emoji string like "👍" or "🎉".
 	ReactMessage(ctx context.Context, messageID, reactionType string) error
-}
-
-// HTTPChannel is an optional extension of MessageChannel that provides a
-// webhook HTTP handler. Platforms like Feishu implement this so the Gateway
-// can automatically mount /webhook/{channel_id}/.
-type HTTPChannel interface {
-	MessageChannel
-
-	// HTTPHandler returns the platform's webhook handler for incoming events.
-	HTTPHandler() http.Handler
 }

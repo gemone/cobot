@@ -27,7 +27,7 @@ type FeishuConfig struct {
 	Domain    string // "feishu" or "lark"
 }
 
-// FeishuChannel implements cobot.MessageChannel for Feishu/Lark bots.
+// FeishuChannel implements cobot.MessageChannel and exposes an HTTP webhook handler for Feishu/Lark integration.
 // It receives messages via WebSocket long connection and sends replies through the Lark IM API.
 type FeishuChannel struct {
 	*cobot.BaseChannel

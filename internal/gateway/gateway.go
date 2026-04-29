@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -14,6 +15,12 @@ import (
 
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
+
+// webhookProvider is an internal capability check: a registered channel that
+// can serve its own inbound webhook HTTP handler. Implemented by Feishu.
+type webhookProvider interface {
+	HTTPHandler() http.Handler
+}
 
 // Config holds gateway server settings.
 type Config struct {
@@ -54,7 +61,7 @@ type Gateway struct {
 	// registered tracks channel instances registered via RegisterChannel.
 	registered map[string]cobot.MessageChannel
 
-	// webhookHandlers stores HTTPChannel handlers keyed by channel ID
+	// webhookHandlers stores webhook handlers keyed by channel ID
 	// for the single /webhook/ dispatcher.
 	webhookHandlers map[string]http.Handler
 
@@ -125,8 +132,8 @@ func (g *Gateway) SetCommandRegistry(r cobot.CommandRegistry) {
 }
 
 // RegisterChannel registers a MessageChannel with the Gateway.
-// It wires OnMessage → dedup → handler → Send, and if the channel
-// implements HTTPChannel, mounts its webhook handler at /webhook/{id}/.
+// It wires OnMessage → dedup → handler → Send, and channels that expose an
+// HTTPHandler (e.g. Feishu) get their webhook mounted at /webhook/{id}/.
 // Returns an error if a channel with the same ID is already registered.
 func (g *Gateway) RegisterChannel(ch cobot.MessageChannel) error {
 	id := ch.ID()
@@ -228,8 +235,8 @@ func (g *Gateway) RegisterChannel(ch cobot.MessageChannel) error {
 		return fmt.Errorf("start channel %q: %w", id, err)
 	}
 
-	// Store webhook handler if HTTPChannel.
-	if hc, ok := ch.(cobot.HTTPChannel); ok {
+	// Store webhook handler if the channel provides one.
+	if hc, ok := ch.(webhookProvider); ok {
 		g.mu.Lock()
 		g.webhookHandlers[id] = hc.HTTPHandler()
 		g.mu.Unlock()
@@ -401,7 +408,7 @@ func (g *Gateway) listChannels(w http.ResponseWriter, r *http.Request) {
 		ci := channelInfo{ID: id}
 		if mc, ok := ch.(cobot.MessageChannel); ok {
 			ci.Platform = mc.Platform()
-			if _, ok := mc.(cobot.HTTPChannel); ok {
+			if _, ok := mc.(webhookProvider); ok {
 				ci.Webhook = true
 			}
 		}
@@ -449,8 +456,8 @@ func (g *Gateway) registerReverseChannel(w http.ResponseWriter, r *http.Request)
 		"status": "registered",
 	}
 	// Only include webhook URL if the channel actually serves one.
-	if _, ok := ch.(cobot.HTTPChannel); ok {
-		resp["webhook"] = "/webhook/" + ch.ID() + "/"
+	if _, ok := ch.(webhookProvider); ok {
+		resp["webhook"] = "/webhook/" + url.PathEscape(ch.ID()) + "/"
 	}
 
 	w.Header().Set("Content-Type", "application/json")
