@@ -85,10 +85,10 @@ func New(cfg Config, channelMgr *channel.Manager, handler MessageHandler) *Gatew
 			WriteTimeout:      30 * time.Second,
 			IdleTimeout:       60 * time.Second,
 		},
-		mux:        mux,
-		channelMgr: channelMgr,
-		handler:    handler,
-		dedup:      make(map[string]time.Time),
+		mux:             mux,
+		channelMgr:      channelMgr,
+		handler:         handler,
+		dedup:           make(map[string]time.Time),
 		registered:      make(map[string]cobot.MessageChannel),
 		webhookHandlers: make(map[string]http.Handler),
 		apiKey:          cfg.APIKey,
@@ -125,7 +125,7 @@ func (g *Gateway) SetCommandRegistry(r cobot.CommandRegistry) {
 }
 
 // RegisterChannel registers a MessageChannel with the Gateway.
-// It wires OnMessage → dedup → handler → SendMessage, and if the channel
+// It wires OnMessage → dedup → handler → Send, and if the channel
 // implements HTTPChannel, mounts its webhook handler at /webhook/{id}/.
 // Returns an error if a channel with the same ID is already registered.
 func (g *Gateway) RegisterChannel(ch cobot.MessageChannel) error {
@@ -172,7 +172,7 @@ func (g *Gateway) RegisterChannel(ch cobot.MessageChannel) error {
 			if out.ReplyToMessageID == "" && msg.MessageID != "" {
 				out.ReplyToMessageID = msg.MessageID
 			}
-			return ch.SendMessage(ctx, out)
+			return ch.Send(ctx, out)
 		}
 
 		// Route /-prefixed messages to command dispatcher first.
@@ -556,7 +556,7 @@ func (g *Gateway) sendChannelMessage(w http.ResponseWriter, r *http.Request, cha
 			out.ReceiveType = req.ChatType
 		}
 		reply = out
-		return mc.SendMessage(r.Context(), out)
+		return mc.Send(r.Context(), out)
 	}
 
 	if err := g.handler(r.Context(), msg, replyFunc); err != nil {

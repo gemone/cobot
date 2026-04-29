@@ -11,17 +11,33 @@ import (
 // mockChannel implements cobot.Channel for testing.
 type mockChannel struct {
 	*cobot.BaseChannel
-	sent   []cobot.ChannelMessage
 	closed bool
 }
 
-func (m *mockChannel) Send(_ context.Context, msg cobot.ChannelMessage) error {
+type mockMessageChannel struct {
+	*mockChannel
+	sent []*cobot.OutboundMessage
+}
+
+func (m *mockMessageChannel) Platform() string { return "mock" }
+
+func (m *mockMessageChannel) OnMessage(handler func(context.Context, *cobot.InboundMessage)) {}
+
+func (m *mockMessageChannel) OnEvent(handler func(context.Context, *cobot.ChannelEvent)) {}
+
+func (m *mockMessageChannel) Send(_ context.Context, msg *cobot.OutboundMessage) (*cobot.SendResult, error) {
 	if err := m.CheckAlive(); err != nil {
-		return err
+		return nil, err
 	}
 	m.sent = append(m.sent, msg)
-	return nil
+	return &cobot.SendResult{Success: true}, nil
 }
+
+func (m *mockMessageChannel) EditMessage(ctx context.Context, chatID, messageID, content string) (*cobot.SendResult, error) {
+	return nil, cobot.ErrNotSupported
+}
+
+func (m *mockMessageChannel) Start(ctx context.Context) error { return nil }
 
 func (m *mockChannel) Close() {
 	if m.BaseChannel.TryClose() {
@@ -102,6 +118,39 @@ func TestManagerAllAliveIDs(t *testing.T) {
 	ids = mgr.AllAliveIDs()
 	if len(ids) != 1 || ids[0] != "test:2" {
 		t.Fatalf("expected [test:2], got %v", ids)
+	}
+}
+
+func TestManagerSendFansOutToAliveEntries(t *testing.T) {
+	mgr := NewManager()
+	ch1 := &mockMessageChannel{mockChannel: &mockChannel{BaseChannel: cobot.NewBaseChannel("test:1")}}
+	ch2 := &mockMessageChannel{mockChannel: &mockChannel{BaseChannel: cobot.NewBaseChannel("test:1")}}
+	dead := &mockMessageChannel{mockChannel: &mockChannel{BaseChannel: cobot.NewBaseChannel("test:1")}}
+	dead.Close()
+
+	mgr.Register(ch1, "session-1")
+	mgr.Register(ch2, "session-2")
+	mgr.Register(dead, "session-dead")
+
+	msg := &cobot.OutboundMessage{Text: "hello"}
+	res, err := mgr.Send(context.Background(), "test:1", msg)
+	if err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+	if res == nil || !res.Success {
+		t.Fatalf("expected successful SendResult, got %#v", res)
+	}
+	if len(ch1.sent) != 1 {
+		t.Fatalf("expected ch1 to receive 1 message, got %d", len(ch1.sent))
+	}
+	if len(ch2.sent) != 1 {
+		t.Fatalf("expected ch2 to receive 1 message, got %d", len(ch2.sent))
+	}
+	if len(dead.sent) != 0 {
+		t.Fatalf("expected dead channel to receive 0 messages, got %d", len(dead.sent))
+	}
+	if ch1.sent[0] != msg || ch2.sent[0] != msg {
+		t.Fatal("expected fan-out to deliver the same outbound message instance")
 	}
 }
 

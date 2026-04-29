@@ -15,12 +15,18 @@ import (
 	"github.com/cobot-agent/cobot/pkg/broker"
 )
 
+const topicCronResult = "cron_result"
+
+type Deliverer interface {
+	Send(ctx context.Context, channelID string, msg *cobot.OutboundMessage) (*cobot.SendResult, error)
+}
+
 // Scheduler manages cron job lifecycle using robfig/cron.
 type Scheduler struct {
 	store        *Store
 	cron         *cron.Cron
 	executeFn    func(ctx context.Context, jobID, prompt, model string) (string, error)
-	notifier     cobot.Notifier // optional notification handler
+	deliverer    Deliverer
 	mu           sync.Mutex
 	jobs         map[string]cron.EntryID // jobID -> cron entry ID
 	jobSchedules map[string]string       // jobID -> schedule string (for change detection)
@@ -47,11 +53,11 @@ const cleanupInterval = 60 * time.Second
 const brokerOpTimeout = 5 * time.Second
 const schedulerLeaseKey = "cron:scheduler"
 
-func NewScheduler(store *Store, executeFn func(ctx context.Context, jobID, prompt, model string) (string, error), runStore *RunStore, br broker.Broker, notifier cobot.Notifier) *Scheduler {
+func NewScheduler(store *Store, executeFn func(ctx context.Context, jobID, prompt, model string) (string, error), runStore *RunStore, br broker.Broker, deliverer Deliverer) *Scheduler {
 	return &Scheduler{
 		store:        store,
 		runStore:     runStore,
-		notifier:     notifier,
+		deliverer:    deliverer,
 		cron:         cron.New(),
 		executeFn:    executeFn,
 		jobs:         make(map[string]cron.EntryID),

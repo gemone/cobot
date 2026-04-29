@@ -108,36 +108,56 @@ func (m *Manager) AllAliveIDs() []string {
 	return ids
 }
 
-// Notify delivers a message to the specified channel (implements cobot.Notifier).
-// It fans out to all registered instances for the channel.
-func (m *Manager) Notify(ctx context.Context, channelID string, msg cobot.ChannelMessage) {
+// Send fans out an outbound message to all alive registered instances for the
+// given channel. The first non-nil SendResult is returned; per-entry errors are
+// logged. If no alive message-capable entries exist, it returns nil, nil.
+func (m *Manager) Send(ctx context.Context, channelID string, msg *cobot.OutboundMessage) (*cobot.SendResult, error) {
 	m.mu.RLock()
 	entries := make([]channelEntry, len(m.channels[channelID]))
 	copy(entries, m.channels[channelID])
 	m.mu.RUnlock()
 
 	if len(entries) == 0 {
-		slog.Debug("notify: channel not found", "channel", channelID)
-		return
+		slog.Debug("send: channel not found", "channel", channelID)
+		return nil, nil
 	}
 
-	// Fan out to all alive instances concurrently.
+	type sendOutcome struct {
+		res *cobot.SendResult
+	}
+	results := make(chan sendOutcome, len(entries))
+
 	var wg sync.WaitGroup
 	for _, e := range entries {
 		if !e.ch.IsAlive() {
-			slog.Debug("notify: skipping dead channel instance", "channel", channelID, "session", e.sessionID)
+			slog.Debug("send: skipping dead channel instance", "channel", channelID, "session", e.sessionID)
+			continue
+		}
+		mc, ok := e.ch.(cobot.MessageChannel)
+		if !ok {
 			continue
 		}
 		wg.Add(1)
-		go func(entry channelEntry) {
+		go func(entry channelEntry, ch cobot.MessageChannel) {
 			defer wg.Done()
-			if err := entry.ch.Send(ctx, msg); err != nil {
-				slog.Warn("failed to deliver notification",
+			res, err := ch.Send(ctx, msg)
+			if err != nil {
+				slog.Warn("failed to deliver message",
 					"channel", channelID, "session", entry.sessionID, "error", err)
 			}
-		}(e)
+			results <- sendOutcome{res: res}
+		}(e, mc)
 	}
 	wg.Wait()
+	close(results)
+
+	for outcome := range results {
+		if outcome.res != nil {
+			return outcome.res, nil
+		}
+	}
+
+	return nil, nil
 }
 
 // Heartbeat records a heartbeat from the given session.

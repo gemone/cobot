@@ -68,7 +68,7 @@ type tuiModel struct {
 	queuedStyle    lipgloss.Style
 	hubStyle       lipgloss.Style
 	wsMgr          *workspace.Manager
-	notificationCh chan cobot.ChannelMessage
+	notificationCh chan *cobot.OutboundMessage
 	tuiChDone      <-chan struct{}
 }
 
@@ -260,7 +260,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case notificationMsg:
 		m.messages = append(m.messages, chatMessage{
 			role: "system",
-			raw:  msg.msg.Content,
+			raw:  msg.msg.Text,
 		})
 		m.refreshViewport()
 		return m, pollNotifications(m.notificationCh, m.tuiChDone)
@@ -381,7 +381,7 @@ var tuiCmd = &cobra.Command{
 		}
 
 		// Set up TUI channel for cron notifications
-		notifyCh := make(chan cobot.ChannelMessage, 16)
+		notifyCh := make(chan *cobot.OutboundMessage, 16)
 		tuiChannelID := resolveTUIChannelID(cfg)
 		tuiCh := newTUIChannel(tuiChannelID, notifyCh)
 		tuiSessionID := "tui:" + uuid.NewString()

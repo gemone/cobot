@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"time"
 
-	cobot "github.com/cobot-agent/cobot/pkg"
 	"github.com/cobot-agent/cobot/pkg/broker"
 	"github.com/google/uuid"
 )
@@ -27,7 +26,7 @@ func newCronResultMessage(channelID string, payload *cronResultPayload) (*broker
 	}
 	return &broker.Message{
 		ID:        uuid.NewString(),
-		Topic:     cobot.MessageTypeCronResult,
+		Topic:     topicCronResult,
 		ChannelID: channelID,
 		Payload:   data,
 		CreatedAt: time.Now(),

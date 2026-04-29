@@ -32,16 +32,16 @@ type FeishuConfig struct {
 type FeishuChannel struct {
 	*cobot.BaseChannel
 	platform string
-	config  FeishuConfig
-	client  *lark.Client
+	config   FeishuConfig
+	client   *lark.Client
 
 	// httpClient and tokenCache bypass the SDK builder to support reply_to_message_id.
-	httpClient  *http.Client
-	tokenCache  tokenCache
+	httpClient *http.Client
+	tokenCache tokenCache
 
 	dispatcher *larkdispatch.EventDispatcher
 	wsClient   *ws.Client
-	bgWg      sync.WaitGroup
+	bgWg       sync.WaitGroup
 
 	handler   func(ctx context.Context, msg *cobot.InboundMessage)
 	handlerMu sync.RWMutex
@@ -52,7 +52,7 @@ type FeishuChannel struct {
 
 // tokenCache holds a cached tenant_access_token with its expiry time.
 type tokenCache struct {
-	token string
+	token  string
 	expire time.Time
 	mu     sync.RWMutex
 }
@@ -64,7 +64,7 @@ func NewFeishuChannel(id string, cfg FeishuConfig) *FeishuChannel {
 		platform:    "feishu",
 		config:      cfg,
 		client:      lark.NewClient(cfg.AppID, cfg.AppSecret),
-		httpClient: &http.Client{Timeout: 10 * time.Second},
+		httpClient:  &http.Client{Timeout: 10 * time.Second},
 	}
 	ch.dispatcher = larkdispatch.NewEventDispatcher("", "").
 		OnP2MessageReceiveV1(ch.handleReceive).
@@ -174,15 +174,15 @@ func (ch *FeishuChannel) handleReceive(ctx context.Context, event *larkim.P2Mess
 
 	inbound := &cobot.InboundMessage{
 		Platform:    ch.platform,
-		ChatID:     chatID,
-		ChatType:   ptrStr(msgData.ChatType),
-		SenderID:   senderID,
-		Text:       text,
+		ChatID:      chatID,
+		ChatType:    ptrStr(msgData.ChatType),
+		SenderID:    senderID,
+		Text:        text,
 		MessageType: msgType,
-		MessageID:  messageID,
-		MediaURLs:  mediaURLs,
-		MediaTypes: mediaTypes,
-		Raw:        []byte(rawContent),
+		MessageID:   messageID,
+		MediaURLs:   mediaURLs,
+		MediaTypes:  mediaTypes,
+		Raw:         []byte(rawContent),
 	}
 
 	ch.handlerMu.RLock()
@@ -213,14 +213,14 @@ func isMediaMessageType(t string) bool {
 	return false
 }
 
-// SendMessage dispatches to the correct Feishu IM API based on MsgType.
+// Send dispatches to the correct Feishu IM API based on MsgType.
 // If MsgType is empty, defaults to "text".
-func (ch *FeishuChannel) SendMessage(ctx context.Context, msg *cobot.OutboundMessage) (*cobot.SendResult, error) {
+func (ch *FeishuChannel) Send(ctx context.Context, msg *cobot.OutboundMessage) (*cobot.SendResult, error) {
 	if !ch.IsAlive() {
 		return nil, fmt.Errorf("feishu channel %s is closed", ch.ID())
 	}
 	if msg.ReceiveID == "" {
-		return nil, fmt.Errorf("feishu SendMessage: receive_id is required")
+		return nil, fmt.Errorf("feishu Send: receive_id is required")
 	}
 
 	msgType := cobot.OutboundMessageType(msg.MsgType)
@@ -233,7 +233,7 @@ func (ch *FeishuChannel) SendMessage(ctx context.Context, msg *cobot.OutboundMes
 	case cobot.OutboundMsgTypePost, cobot.OutboundMsgTypeInteractive:
 		content = msg.RichContent
 		if content == "" {
-			return nil, fmt.Errorf("feishu SendMessage: rich_content required for %s", msgType)
+			return nil, fmt.Errorf("feishu Send: rich_content required for %s", msgType)
 		}
 	case cobot.OutboundMsgTypeImage:
 		return ch.sendImageKey(ctx, msg.ReceiveID, msg.ImageKey)
@@ -329,9 +329,9 @@ func (ch *FeishuChannel) sendReplyTo(ctx context.Context, msg *cobot.OutboundMes
 	}
 
 	var result struct {
-		Code   int    `json:"code"`
-		Msg    string `json:"msg"`
-		Data   struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+		Data struct {
 			MessageID string `json:"message_id"`
 		} `json:"data"`
 	}
@@ -361,7 +361,7 @@ func (ch *FeishuChannel) getTenantToken(ctx context.Context) (string, error) {
 	ch.tokenCache.mu.Lock()
 	defer ch.tokenCache.mu.Unlock()
 	// Re-check after acquiring write lock.
-	if time.Now().Before(ch.tokenCache.expire.Add(-30*time.Second)) {
+	if time.Now().Before(ch.tokenCache.expire.Add(-30 * time.Second)) {
 		return ch.tokenCache.token, nil
 	}
 
@@ -379,9 +379,9 @@ func (ch *FeishuChannel) getTenantToken(ctx context.Context) (string, error) {
 	defer resp.Body.Close()
 
 	var result struct {
-		Code              int    `json:"code"`
-		Token             string `json:"tenant_access_token"`
-		ExpireIn          int    `json:"expire"`
+		Code     int    `json:"code"`
+		Token    string `json:"tenant_access_token"`
+		ExpireIn int    `json:"expire"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", fmt.Errorf("feishu token parse: %w", err)
@@ -518,13 +518,6 @@ func (ch *FeishuChannel) EditMessage(ctx context.Context, chatID, messageID, con
 		return &cobot.SendResult{Success: false}, fmt.Errorf("feishu edit message: %w", err)
 	}
 	return &cobot.SendResult{Success: true, MessageID: messageID}, nil
-}
-
-// Send delivers a notification via the generic Channel interface.
-// Feishu WS mode does not support push notifications without a target chat.
-func (ch *FeishuChannel) Send(ctx context.Context, msg cobot.ChannelMessage) error {
-	slog.Warn("feishu: Send (notification) called but no default chat configured", "channel", ch.ID())
-	return cobot.ErrNotSupported
 }
 
 // buildPostPayload converts markdown text to Feishu post JSON format.

@@ -41,7 +41,7 @@ const maxAckMessages = 1000
 func (s *Scheduler) ackAllExisting(ctx context.Context) {
 	acked := 0
 	for {
-		msgs, err := s.broker.Consume(ctx, cobot.MessageTypeCronResult, "", s.sessionID, 100)
+		msgs, err := s.broker.Consume(ctx, topicCronResult, "", s.sessionID, 100)
 		if err != nil || len(msgs) == 0 {
 			slog.Debug("ackAllExisting completed", "acked", acked)
 			return
@@ -70,7 +70,7 @@ func (s *Scheduler) consumeOnce(ctx context.Context) {
 		}
 	}()
 	// sessionID is used as the consume session identity (separate from leader lease holderID).
-	msgs, err := s.broker.Consume(ctx, cobot.MessageTypeCronResult, "", s.sessionID, 50)
+	msgs, err := s.broker.Consume(ctx, topicCronResult, "", s.sessionID, 50)
 	if err != nil {
 		slog.Warn("failed to consume cron results", "error", err)
 		return
@@ -96,12 +96,15 @@ func (s *Scheduler) consumeOnce(ctx context.Context) {
 			continue
 		}
 		content := formatCronResult(payload.JobName, payload.Result, payload.Error)
-		if s.notifier != nil {
-			s.notifier.Notify(notifyCtx, msg.ChannelID, cobot.ChannelMessage{
-				Type:    cobot.MessageTypeCronResult,
-				Title:   fmt.Sprintf("Cron job %q completed", payload.JobName),
-				Content: content,
-			})
+		if s.deliverer != nil {
+			title := fmt.Sprintf("Cron job %q completed", payload.JobName)
+			out := &cobot.OutboundMessage{
+				ReceiveID: msg.ChannelID,
+				Text:      title + "\n\n" + content,
+			}
+			if _, err := s.deliverer.Send(notifyCtx, msg.ChannelID, out); err != nil {
+				slog.Warn("failed to deliver cron result", "channel_id", msg.ChannelID, "error", err)
+			}
 		}
 		ackIDs = append(ackIDs, msg.ID)
 	}

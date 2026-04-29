@@ -3,6 +3,7 @@ package cron
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -15,27 +16,28 @@ import (
 // Fakes for consumer tests
 // ---------------------------------------------------------------------------
 
-// fakeNotifier records Notify calls for test assertions.
-type fakeNotifier struct {
+// fakeDeliverer records Send calls for test assertions.
+type fakeDeliverer struct {
 	mu    sync.Mutex
-	calls []notifyCall
+	calls []deliverCall
 }
 
-type notifyCall struct {
+type deliverCall struct {
 	channelID string
-	msg       cobot.ChannelMessage
+	msg       *cobot.OutboundMessage
 }
 
-func (f *fakeNotifier) Notify(_ context.Context, channelID string, msg cobot.ChannelMessage) {
+func (f *fakeDeliverer) Send(_ context.Context, channelID string, msg *cobot.OutboundMessage) (*cobot.SendResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, notifyCall{channelID: channelID, msg: msg})
+	f.calls = append(f.calls, deliverCall{channelID: channelID, msg: msg})
+	return &cobot.SendResult{Success: true, MessageID: "test-msg-id"}, nil
 }
 
-func (f *fakeNotifier) getCalls() []notifyCall {
+func (f *fakeDeliverer) getCalls() []deliverCall {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	out := make([]notifyCall, len(f.calls))
+	out := make([]deliverCall, len(f.calls))
 	copy(out, f.calls)
 	return out
 }
@@ -172,7 +174,7 @@ func TestAckAllExisting_IterationLimit(t *testing.T) {
 }
 
 // TestConsumeOnce_EmptyChannelID verifies that messages with an empty
-// ChannelID are acked but not delivered to the notifier.
+// ChannelID are acked but not delivered.
 func TestConsumeOnce_EmptyChannelID(t *testing.T) {
 	t.Parallel()
 
@@ -180,9 +182,9 @@ func TestConsumeOnce_EmptyChannelID(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	notifier := &fakeNotifier{}
+	deliverer := &fakeDeliverer{}
 	store := NewStore(t.TempDir())
-	s := NewScheduler(store, noopExecuteFn, nil, br, notifier)
+	s := NewScheduler(store, noopExecuteFn, nil, br, deliverer)
 
 	// Publish a cron result with empty channel ID.
 	payload := &cronResultPayload{
@@ -200,13 +202,11 @@ func TestConsumeOnce_EmptyChannelID(t *testing.T) {
 
 	s.consumeOnce(ctx)
 
-	// Should NOT have notified.
-	if calls := notifier.getCalls(); len(calls) != 0 {
-		t.Errorf("expected 0 notify calls for empty ChannelID, got %d", len(calls))
+	if calls := deliverer.getCalls(); len(calls) != 0 {
+		t.Errorf("expected 0 deliver calls for empty ChannelID, got %d", len(calls))
 	}
 
-	// Message should be acked — consuming again should return nothing.
-	msgs, err := br.Consume(ctx, cobot.MessageTypeCronResult, "", s.sessionID, 50)
+	msgs, err := br.Consume(ctx, topicCronResult, "", s.sessionID, 50)
 	if err != nil {
 		t.Fatalf("Consume after ack: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestConsumeOnce_EmptyChannelID(t *testing.T) {
 }
 
 // TestConsumeOnce_ValidChannelID verifies that messages with a non-empty
-// ChannelID are both notified and acked.
+// ChannelID are both delivered and acked.
 func TestConsumeOnce_ValidChannelID(t *testing.T) {
 	t.Parallel()
 
@@ -224,9 +224,9 @@ func TestConsumeOnce_ValidChannelID(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	notifier := &fakeNotifier{}
+	deliverer := &fakeDeliverer{}
 	store := NewStore(t.TempDir())
-	s := NewScheduler(store, noopExecuteFn, nil, br, notifier)
+	s := NewScheduler(store, noopExecuteFn, nil, br, deliverer)
 
 	// Publish a cron result with a valid channel ID.
 	payload := &cronResultPayload{
@@ -244,23 +244,28 @@ func TestConsumeOnce_ValidChannelID(t *testing.T) {
 
 	s.consumeOnce(ctx)
 
-	// Should have notified exactly once.
-	calls := notifier.getCalls()
+	calls := deliverer.getCalls()
 	if len(calls) != 1 {
-		t.Fatalf("expected 1 notify call, got %d", len(calls))
+		t.Fatalf("expected 1 deliver call, got %d", len(calls))
 	}
 	if calls[0].channelID != "channel-123" {
-		t.Errorf("notify channelID = %q, want %q", calls[0].channelID, "channel-123")
+		t.Errorf("deliver channelID = %q, want %q", calls[0].channelID, "channel-123")
 	}
-	if calls[0].msg.Type != cobot.MessageTypeCronResult {
-		t.Errorf("notify msg.Type = %q, want %q", calls[0].msg.Type, cobot.MessageTypeCronResult)
+	if calls[0].msg == nil {
+		t.Fatal("expected delivered message")
 	}
-	if calls[0].msg.Title != `Cron job "test-valid-channel" completed` {
-		t.Errorf("notify msg.Title = %q", calls[0].msg.Title)
+	if calls[0].msg.ReceiveID != "channel-123" {
+		t.Errorf("deliver msg.ReceiveID = %q, want %q", calls[0].msg.ReceiveID, "channel-123")
+	}
+	wantTitle := `Cron job "test-valid-channel" completed`
+	if !strings.Contains(calls[0].msg.Text, wantTitle) {
+		t.Errorf("deliver msg.Text missing title %q; got %q", wantTitle, calls[0].msg.Text)
+	}
+	if !strings.Contains(calls[0].msg.Text, "world") {
+		t.Errorf("deliver msg.Text missing result %q; got %q", "world", calls[0].msg.Text)
 	}
 
-	// Message should be acked — consuming again should return nothing.
-	msgs, err := br.Consume(ctx, cobot.MessageTypeCronResult, "", s.sessionID, 50)
+	msgs, err := br.Consume(ctx, topicCronResult, "", s.sessionID, 50)
 	if err != nil {
 		t.Fatalf("Consume after ack: %v", err)
 	}

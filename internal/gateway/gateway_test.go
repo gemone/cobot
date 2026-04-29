@@ -41,7 +41,7 @@ func (m *mockMessageChannel) OnMessage(handler func(ctx context.Context, msg *co
 
 func (m *mockMessageChannel) OnEvent(handler func(ctx context.Context, event *cobot.ChannelEvent)) {}
 
-func (m *mockMessageChannel) SendMessage(ctx context.Context, msg *cobot.OutboundMessage) (*cobot.SendResult, error) {
+func (m *mockMessageChannel) Send(ctx context.Context, msg *cobot.OutboundMessage) (*cobot.SendResult, error) {
 	m.mu.Lock()
 	m.sent = append(m.sent, msg)
 	m.mu.Unlock()
@@ -53,10 +53,6 @@ func (m *mockMessageChannel) EditMessage(ctx context.Context, chatID, messageID,
 }
 
 func (m *mockMessageChannel) Start(ctx context.Context) error {
-	return nil
-}
-
-func (m *mockMessageChannel) Send(ctx context.Context, msg cobot.ChannelMessage) error {
 	return nil
 }
 
