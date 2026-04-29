@@ -116,14 +116,20 @@ type MessageChannel interface {
 	// Send sends an outbound message to the platform.
 	Send(ctx context.Context, msg *OutboundMessage) (*SendResult, error)
 
-	// EditMessage updates a previously sent message (for pseudo-streaming).
-	// Platforms that don't support editing should return nil, ErrNotSupported.
-	EditMessage(ctx context.Context, chatID, messageID, content string) (*SendResult, error)
-
 	// Start initiates the channel's connection (e.g. WebSocket handshake).
 	// It is called by the Gateway after RegisterChannel, before processing messages.
 	// For channels that don't need explicit startup (e.g. Reverse), this is a no-op.
 	Start(ctx context.Context) error
+}
+
+// EditableChannel is implemented by MessageChannel platforms that support
+// editing previously-sent messages (used for pseudo-streaming on platforms
+// like Feishu). Platforms without edit support simply do not implement it.
+type EditableChannel interface {
+	MessageChannel
+
+	// EditMessage updates a previously sent message.
+	EditMessage(ctx context.Context, chatID, messageID, content string) (*SendResult, error)
 }
 
 // ChannelEventType describes the type of a channel system event.

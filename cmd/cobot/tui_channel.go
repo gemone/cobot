@@ -61,10 +61,6 @@ func (ch *tuiChannel) Send(ctx context.Context, msg *cobot.OutboundMessage) (*co
 	}
 }
 
-func (ch *tuiChannel) EditMessage(ctx context.Context, chatID, messageID, content string) (*cobot.SendResult, error) {
-	return nil, cobot.ErrNotSupported
-}
-
 func (ch *tuiChannel) Start(ctx context.Context) error { return nil }
 
 func (ch *tuiChannel) Close() {

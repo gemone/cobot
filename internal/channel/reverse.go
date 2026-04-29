@@ -88,11 +88,6 @@ func (ch *ReverseChannel) Send(ctx context.Context, msg *cobot.OutboundMessage) 
 	return &cobot.SendResult{Success: true}, nil
 }
 
-// EditMessage is not supported for reverse channels.
-func (ch *ReverseChannel) EditMessage(ctx context.Context, chatID, messageID, content string) (*cobot.SendResult, error) {
-	return nil, cobot.ErrNotSupported
-}
-
 // ReactMessage is not supported for reverse channels.
 func (ch *ReverseChannel) ReactMessage(ctx context.Context, messageID, reactionType string) error {
 	return cobot.ErrNotSupported

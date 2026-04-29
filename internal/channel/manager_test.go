@@ -33,10 +33,6 @@ func (m *mockMessageChannel) Send(_ context.Context, msg *cobot.OutboundMessage)
 	return &cobot.SendResult{Success: true}, nil
 }
 
-func (m *mockMessageChannel) EditMessage(ctx context.Context, chatID, messageID, content string) (*cobot.SendResult, error) {
-	return nil, cobot.ErrNotSupported
-}
-
 func (m *mockMessageChannel) Start(ctx context.Context) error { return nil }
 
 func (m *mockChannel) Close() {

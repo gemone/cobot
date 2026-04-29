@@ -103,15 +103,6 @@ func TestReverseChannelAliveAndClose(t *testing.T) {
 	ch.Close()
 }
 
-func TestReverseChannelEditNotSupported(t *testing.T) {
-	ch := NewReverseChannel("rev-6", "http://localhost/cb", "")
-	defer ch.Close()
-	_, err := ch.EditMessage(context.Background(), "chat1", "msg1", "text")
-	if err != cobot.ErrNotSupported {
-		t.Fatalf("expected ErrNotSupported, got %v", err)
-	}
-}
-
 func TestReverseChannelSendNotificationAsMessage(t *testing.T) {
 	var receivedBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
