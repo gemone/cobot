@@ -111,6 +111,14 @@ func (ch *FeishuChannel) handleReceive(ctx context.Context, event *larkim.P2Mess
 		return nil
 	}
 
+	// Skip messages from the bot itself (sender_type=app) to avoid self-reactions
+	// and feedback loops when the bot's own outbound messages echo back via WS events.
+	if event.Event.Sender != nil {
+		if st := ptrStr(event.Event.Sender.SenderType); st == "app" {
+			return nil
+		}
+	}
+
 	msgData := event.Event.Message
 	rawContent := ptrStr(msgData.Content)
 	msgType := ptrStr(msgData.MessageType)
@@ -185,12 +193,10 @@ func (ch *FeishuChannel) handleReceive(ctx context.Context, event *larkim.P2Mess
 		Raw:         []byte(rawContent),
 	}
 
-	// Auto-react: add 👍 to confirm receipt immediately. Runs async so it doesn't block.
-	go func() {
-		if r, ok := interface{}(ch).(cobot.Reactioner); ok {
-			_ = r.ReactMessage(context.Background(), messageID, "👍")
-		}
-	}()
+	// Auto-react synchronously BEFORE invoking the handler. This guarantees the
+	// 👍 reaction appears before any reply text, since reply is dispatched by
+	// the handler. An async goroutine would race the reply HTTP call.
+	_ = ch.ReactMessage(ctx, messageID, "👍")
 
 	ch.handlerMu.RLock()
 	handler := ch.handler
@@ -290,9 +296,9 @@ func (ch *FeishuChannel) sendReplyTo(ctx context.Context, msg *cobot.OutboundMes
 	}
 
 	body := map[string]any{
-		"receive_id": msg.ReceiveID,
-		"msg_type":   msgType,
-		"content":    content,
+		"msg_type":        msgType,
+		"content":         content,
+		"reply_in_thread": false,
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -304,11 +310,7 @@ func (ch *FeishuChannel) sendReplyTo(ctx context.Context, msg *cobot.OutboundMes
 		return nil, fmt.Errorf("feishu reply: get token: %w", err)
 	}
 
-	// Build URL with optional reply_to_message_id.
-	url := fmt.Sprintf("https://open.%s.cn/open-apis/im/v1/messages?receive_id_type=chat_id", ch.config.Domain)
-	if msg.ReplyToMessageID != "" {
-		url += "&reply_to_message_id=" + msg.ReplyToMessageID
-	}
+	url := fmt.Sprintf("https://open.%s.cn/open-apis/im/v1/messages/%s/reply", ch.config.Domain, msg.ReplyToMessageID)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
@@ -511,7 +513,8 @@ func (ch *FeishuChannel) EditMessage(ctx context.Context, chatID, messageID, con
 		larkim.NewUpdateMessageReqBuilder().
 			MessageId(messageID).
 			Body(larkim.NewUpdateMessageReqBodyBuilder().
-				Content(formatTextContent(content)).
+				MsgType(string(cobot.OutboundMsgTypePost)).
+				Content(buildPostPayload(content)).
 				Build()).
 			Build(),
 	)
@@ -593,13 +596,6 @@ func buildMarkdownPostRows(content string) [][]map[string]string {
 // containsCodeFence returns true if content contains fenced code blocks.
 func containsCodeFence(content string) bool {
 	return strings.Contains(content, "```")
-}
-
-// formatTextContent wraps plain text into the JSON format expected by Feishu.
-func formatTextContent(text string) string {
-	payload := map[string]string{"text": text}
-	data, _ := json.Marshal(payload) // json.Marshal always succeeds for a flat map
-	return string(data)
 }
 
 // OnEvent registers a callback for Feishu system events.
