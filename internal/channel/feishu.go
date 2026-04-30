@@ -111,10 +111,12 @@ func (ch *FeishuChannel) handleReceive(ctx context.Context, event *larkim.P2Mess
 		return nil
 	}
 
-	// Skip messages from the bot itself (sender_type=app) to avoid self-reactions
-	// and feedback loops when the bot's own outbound messages echo back via WS events.
+	// Skip messages from the bot itself to avoid self-reactions and feedback loops.
+	// Per Lark SDK docs (im.message.receive_v1), sender_type values are "user" | "bot";
+	// "bot" indicates a message originated from an app/bot, including this one's own
+	// outbound messages that echo back via the websocket event stream.
 	if event.Event.Sender != nil {
-		if st := ptrStr(event.Event.Sender.SenderType); st == "app" {
+		if st := ptrStr(event.Event.Sender.SenderType); st == "bot" || st == "app" {
 			return nil
 		}
 	}
@@ -251,6 +253,8 @@ func (ch *FeishuChannel) Send(ctx context.Context, msg *cobot.OutboundMessage) (
 		content = buildPostPayload(msg.Text)
 	}
 
+	slog.Info("feishu: Send dispatch", "channel", ch.ID(), "chat_id", msg.ReceiveID, "msg_type", msgType, "reply_to", msg.ReplyToMessageID, "text_len", len(msg.Text))
+
 	// Use direct HTTP for reply_to_message_id support (SDK builder doesn't support it).
 	if msg.ReplyToMessageID != "" {
 		return ch.sendReplyTo(ctx, msg)
@@ -311,6 +315,7 @@ func (ch *FeishuChannel) sendReplyTo(ctx context.Context, msg *cobot.OutboundMes
 	}
 
 	url := fmt.Sprintf("https://open.%s.cn/open-apis/im/v1/messages/%s/reply", ch.config.Domain, msg.ReplyToMessageID)
+	slog.Info("feishu: sendReplyTo", "url", url, "reply_to", msg.ReplyToMessageID, "msg_type", msgType, "payload", string(payload))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
@@ -326,6 +331,7 @@ func (ch *FeishuChannel) sendReplyTo(ctx context.Context, msg *cobot.OutboundMes
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
+	slog.Info("feishu: reply API response", "status", resp.StatusCode, "body", string(respBody))
 	if resp.StatusCode >= 300 {
 		slog.Warn("feishu: reply failed", "status", resp.StatusCode, "body", string(respBody))
 		return &cobot.SendResult{Success: false}, fmt.Errorf("feishu reply returned %d: %s", resp.StatusCode, respBody)
