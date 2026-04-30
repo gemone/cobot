@@ -48,6 +48,19 @@ type FeishuChannel struct {
 
 	eventHandler   func(ctx context.Context, event *cobot.ChannelEvent)
 	eventHandlerMu sync.RWMutex
+
+	// sentIDs records message IDs this channel sent itself. Lark redelivers
+	// some bot-authored messages back through the WS event stream as
+	// P2MessageReceiveV1 with sender_type values that vary across tenants
+	// (observed: missing/empty in production), so the SenderType check in
+	// handleReceive is unreliable on its own. Tracking our own outbound IDs
+	// is the only deterministic way to suppress self-echo reactions.
+	sentIDs sync.Map
+	// seenIDs deduplicates inbound message IDs at channel level. Gateway
+	// dedup runs inside the handler, but auto-react fires *before* the
+	// handler is invoked, so WS redelivery would otherwise trigger
+	// duplicate 👍 reactions on the same user message.
+	seenIDs sync.Map
 }
 
 // tokenCache holds a cached tenant_access_token with its expiry time.
@@ -135,6 +148,24 @@ func (ch *FeishuChannel) handleReceive(ctx context.Context, event *larkim.P2Mess
 
 	chatID := ptrStr(msgData.ChatId)
 	messageID := ptrStr(msgData.MessageId)
+
+	if messageID != "" {
+		if _, ours := ch.sentIDs.Load(messageID); ours {
+			slog.Debug("feishu: skip self-echo by id", "message_id", messageID)
+			return nil
+		}
+		if _, dup := ch.seenIDs.LoadOrStore(messageID, time.Now()); dup {
+			slog.Debug("feishu: skip duplicate inbound", "message_id", messageID)
+			return nil
+		}
+	}
+
+	if event.Event.Sender != nil {
+		slog.Debug("feishu: inbound sender",
+			"sender_type", ptrStr(event.Event.Sender.SenderType),
+			"tenant_key", ptrStr(event.Event.Sender.TenantKey),
+			"message_id", messageID)
+	}
 
 	senderID := ""
 	if event.Event.Sender != nil && event.Event.Sender.SenderId != nil {
@@ -278,6 +309,9 @@ func (ch *FeishuChannel) Send(ctx context.Context, msg *cobot.OutboundMessage) (
 	if resp != nil && resp.Data != nil {
 		messageID = ptrStr(resp.Data.MessageId)
 	}
+	if messageID != "" {
+		ch.sentIDs.Store(messageID, time.Now())
+	}
 	slog.Debug("feishu: message sent", "channel", ch.ID(), "chat_id", msg.ReceiveID, "message_id", messageID, "type", msgType)
 	return &cobot.SendResult{Success: true, MessageID: messageID}, nil
 }
@@ -349,6 +383,10 @@ func (ch *FeishuChannel) sendReplyTo(ctx context.Context, msg *cobot.OutboundMes
 	}
 	if result.Code != 0 {
 		return &cobot.SendResult{Success: false}, fmt.Errorf("feishu reply API error %d: %s", result.Code, result.Msg)
+	}
+
+	if result.Data.MessageID != "" {
+		ch.sentIDs.Store(result.Data.MessageID, time.Now())
 	}
 
 	slog.Debug("feishu: reply sent", "channel", ch.ID(), "message_id", result.Data.MessageID, "reply_to", msg.ReplyToMessageID)
@@ -428,6 +466,9 @@ func (ch *FeishuChannel) sendImageKey(ctx context.Context, chatID, imageKey stri
 	if resp != nil && resp.Data != nil {
 		messageID = ptrStr(resp.Data.MessageId)
 	}
+	if messageID != "" {
+		ch.sentIDs.Store(messageID, time.Now())
+	}
 	return &cobot.SendResult{Success: true, MessageID: messageID}, nil
 }
 
@@ -502,6 +543,9 @@ func (ch *FeishuChannel) sendMediaKey(ctx context.Context, chatID, mediaKey, msg
 	messageID := ""
 	if resp != nil && resp.Data != nil {
 		messageID = ptrStr(resp.Data.MessageId)
+	}
+	if messageID != "" {
+		ch.sentIDs.Store(messageID, time.Now())
 	}
 	return &cobot.SendResult{Success: true, MessageID: messageID}, nil
 }
