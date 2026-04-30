@@ -231,6 +231,12 @@ func (g *Gateway) RegisterChannel(ch cobot.MessageChannel) error {
 
 	// Start the channel's connection (e.g. WebSocket for Feishu).
 	if err := ch.Start(context.Background()); err != nil {
+		// Roll back the registration so the same ID can be re-registered later
+		// and we don't retain a dead entry in g.registered.
+		g.mu.Lock()
+		delete(g.registered, id)
+		delete(g.webhookHandlers, id)
+		g.mu.Unlock()
 		ch.Close()
 		return fmt.Errorf("start channel %q: %w", id, err)
 	}
@@ -256,8 +262,10 @@ func (g *Gateway) RegisterChannel(ch cobot.MessageChannel) error {
 	return nil
 }
 
-// UnregisterChannel removes a channel registered via RegisterChannel.
-// Only channels with the "gateway:" session prefix are removed.
+// UnregisterChannel removes a channel previously added via RegisterChannel.
+// It deletes the gateway's local registration (and any webhook handler),
+// unregisters the channel from the manager, and closes it.
+// Returns false if the channel was not registered through this gateway.
 func (g *Gateway) UnregisterChannel(channelID string) bool {
 	g.mu.Lock()
 	ch, exists := g.registered[channelID]

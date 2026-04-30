@@ -99,8 +99,7 @@ func (s *Scheduler) consumeOnce(ctx context.Context) {
 		if s.deliverer != nil {
 			title := fmt.Sprintf("Cron job %q completed", payload.JobName)
 			out := &cobot.OutboundMessage{
-				ReceiveID: msg.ChannelID,
-				Text:      title + "\n\n" + content,
+				Text: title + "\n\n" + content,
 			}
 			if _, err := s.deliverer.Send(notifyCtx, msg.ChannelID, out); err != nil {
 				slog.Warn("failed to deliver cron result", "channel_id", msg.ChannelID, "error", err)

@@ -254,8 +254,8 @@ func TestConsumeOnce_ValidChannelID(t *testing.T) {
 	if calls[0].msg == nil {
 		t.Fatal("expected delivered message")
 	}
-	if calls[0].msg.ReceiveID != "channel-123" {
-		t.Errorf("deliver msg.ReceiveID = %q, want %q", calls[0].msg.ReceiveID, "channel-123")
+	if calls[0].msg.ReceiveID != "" {
+		t.Errorf("deliver msg.ReceiveID = %q, want empty (channel resolves platform destination)", calls[0].msg.ReceiveID)
 	}
 	wantTitle := `Cron job "test-valid-channel" completed`
 	if !strings.Contains(calls[0].msg.Text, wantTitle) {
