@@ -240,9 +240,9 @@ func (ch *FeishuChannel) Send(ctx context.Context, msg *cobot.OutboundMessage) (
 	case cobot.OutboundMsgTypeAudio, cobot.OutboundMsgTypeVideo, cobot.OutboundMsgTypeFile, cobot.OutboundMsgTypeMedia:
 		return ch.sendMediaKey(ctx, msg.ReceiveID, msg.MediaKey, string(msgType))
 	case cobot.OutboundMsgTypeText:
-		content = formatTextContent(msg.Text)
+		content = buildPostPayload(msg.Text)
 	default:
-		content = formatTextContent(msg.Text)
+		content = buildPostPayload(msg.Text)
 	}
 
 	// Use direct HTTP for reply_to_message_id support (SDK builder doesn't support it).
@@ -285,7 +285,8 @@ func (ch *FeishuChannel) sendReplyTo(ctx context.Context, msg *cobot.OutboundMes
 	case cobot.OutboundMsgTypePost, cobot.OutboundMsgTypeInteractive:
 		content = msg.RichContent
 	default:
-		content = formatTextContent(msg.Text)
+		content = buildPostPayload(msg.Text)
+		msgType = cobot.OutboundMsgTypePost
 	}
 
 	body := map[string]any{
