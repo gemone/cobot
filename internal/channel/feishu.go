@@ -185,6 +185,13 @@ func (ch *FeishuChannel) handleReceive(ctx context.Context, event *larkim.P2Mess
 		Raw:         []byte(rawContent),
 	}
 
+	// Auto-react: add 👍 to confirm receipt immediately. Runs async so it doesn't block.
+	go func() {
+		if r, ok := interface{}(ch).(cobot.Reactioner); ok {
+			_ = r.ReactMessage(context.Background(), messageID, "👍")
+		}
+	}()
+
 	ch.handlerMu.RLock()
 	handler := ch.handler
 	ch.handlerMu.RUnlock()
@@ -192,13 +199,6 @@ func (ch *FeishuChannel) handleReceive(ctx context.Context, event *larkim.P2Mess
 	if handler != nil {
 		handler(ctx, inbound)
 	}
-
-	// Auto-react: add 👍 to confirm receipt. Runs async so it doesn't block.
-	go func() {
-		if r, ok := interface{}(ch).(cobot.Reactioner); ok {
-			_ = r.ReactMessage(context.Background(), messageID, "👍")
-		}
-	}()
 
 	return nil
 }
