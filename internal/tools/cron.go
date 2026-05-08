@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cobot-agent/cobot/internal/requestctx"
 	"github.com/cobot-agent/cobot/internal/textutil"
 
 	"github.com/cobot-agent/cobot/internal/cron"
@@ -32,26 +33,11 @@ const displayTimeFmt = "2006-01-02 15:04:05"
 
 // CronTool allows the agent to schedule and manage recurring and one-shot tasks.
 type CronTool struct {
-	scheduler   *cron.Scheduler
-	channelIDFn func() string // returns the channel ID of the current context
-	chatIDFn    func() string // returns the platform chat ID of the current context
+	scheduler *cron.Scheduler
 }
 
 // CronToolOption is a functional option for CronTool.
 type CronToolOption func(*CronTool)
-
-// WithCronChannelIDFn sets a function that returns the current channel ID.
-// Cron job results are sent back to the originating channel.
-func WithCronChannelIDFn(fn func() string) CronToolOption {
-	return func(t *CronTool) { t.channelIDFn = fn }
-}
-
-// WithCronChatIDFn sets a function that returns the current platform chat ID
-// (e.g. Feishu oc_xxx). This is stored on the job and used as ReceiveID
-// when delivering cron results.
-func WithCronChatIDFn(fn func() string) CronToolOption {
-	return func(t *CronTool) { t.chatIDFn = fn }
-}
 
 // NewCronTool creates a new CronTool with the given scheduler.
 func NewCronTool(scheduler *cron.Scheduler, opts ...CronToolOption) *CronTool {
@@ -63,23 +49,6 @@ func NewCronTool(scheduler *cron.Scheduler, opts ...CronToolOption) *CronTool {
 }
 
 func (t *CronTool) Name() string { return "cron" }
-
-// currentChannelID returns the channel ID from the injected function, or empty string.
-// The default wiring (bootstrap.go) selects the first alive channel.
-func (t *CronTool) currentChannelID() string {
-	if t.channelIDFn != nil {
-		return t.channelIDFn()
-	}
-	return ""
-}
-
-// currentChatID returns the platform chat ID from the injected function, or empty string.
-func (t *CronTool) currentChatID() string {
-	if t.chatIDFn != nil {
-		return t.chatIDFn()
-	}
-	return ""
-}
 
 func (t *CronTool) Description() string {
 	return `Schedule and manage recurring and one-shot tasks. Actions: create (schedule a new job), list (show all jobs), delete (remove a job), pause (temporarily stop a job), resume (restart a paused job), list_runs (show execution history for a job). Use cron expressions like "0 9 * * *" for recurring tasks or ISO timestamps for one-shot tasks. Results are stored in per-job run databases and can be viewed with list_runs.`
@@ -148,9 +117,8 @@ func (t *CronTool) handleCreate(ctx context.Context, params cronParams) (string,
 		Status:    cron.StatusActive,
 		OneShot:   oneShot,
 		CreatedAt: time.Now(),
-		ChannelID: t.currentChannelID(),
-		ChatID:    t.currentChatID(),
 	}
+	applyMessageTarget(job, ctx)
 
 	if err := t.scheduler.AddJob(job); err != nil {
 		return "", err
@@ -169,6 +137,19 @@ func (t *CronTool) handleCreate(ctx context.Context, params cronParams) (string,
 	}
 	return fmt.Sprintf("Job created:\n  ID: %s\n  read_id: %s\n  Name: %s\n  Schedule: %s\n  Type: %s\n  Next run: %s\n",
 		job.ID, job.ReadID(), job.Name, job.Schedule, typ, nextStr), nil
+}
+
+func applyMessageTarget(job *cron.Job, ctx context.Context) {
+	target, ok := requestctx.MessageTargetFromContext(ctx)
+	if !ok {
+		return
+	}
+	job.Delivery = cron.DeliveryTarget{
+		ChannelID:        target.ChannelID,
+		ChatID:           target.ChatID,
+		ChatType:         target.ChatType,
+		ReplyToMessageID: target.ReplyToMessageID,
+	}
 }
 
 func (t *CronTool) handleList() (string, error) {

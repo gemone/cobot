@@ -93,10 +93,6 @@ type Agent struct {
 	// Calling ConfigureAgentForWorkspace again (workspace switch) cancels the
 	// previous goroutine before starting a new one, preventing goroutine leaks.
 	archivalStop context.CancelFunc
-
-	// chatIDs stores the current chat ID per agent key for thread-safe access.
-	// Used by the gateway handler to communicate the active chat to tools (e.g. cron).
-	chatIDs sync.Map
 }
 
 // CronScheduler is a minimal interface for stopping the cron scheduler.
@@ -339,24 +335,4 @@ func (a *Agent) Close() error {
 		}
 	}
 	return nil
-}
-
-// SetCurrentChatID stores the current chat ID for the given agent key.
-// Called by the gateway handler before Prompt so tools (e.g. cron) can
-// capture the target chat for result delivery.
-func (a *Agent) SetCurrentChatID(agentKey, chatID string) {
-	a.chatIDs.Store(agentKey, chatID)
-}
-
-// GetCurrentChatID returns the current chat ID for the given agent key.
-func (a *Agent) GetCurrentChatID(agentKey string) string {
-	if v, ok := a.chatIDs.Load(agentKey); ok {
-		return v.(string)
-	}
-	return ""
-}
-
-// ChatIDs returns the underlying chat ID map for iteration.
-func (a *Agent) ChatIDs() *sync.Map {
-	return &a.chatIDs
 }

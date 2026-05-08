@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/cobot-agent/cobot/internal/requestctx"
 	cobot "github.com/cobot-agent/cobot/pkg"
 
 	"github.com/cobot-agent/cobot/internal/channel"
@@ -506,5 +507,70 @@ func TestGatewayHealthNoAuthRequired(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 on health without auth, got %d", resp.StatusCode)
+	}
+}
+
+func TestGatewayInjectsMessageTargetIntoContext(t *testing.T) {
+	mgr := channel.NewManager()
+	var got requestctx.MessageTarget
+	var ok bool
+	handler := func(ctx context.Context, msg *cobot.InboundMessage, replyFunc ReplyFunc) error {
+		got, ok = requestctx.MessageTargetFromContext(ctx)
+		return nil
+	}
+
+	gw := New(Config{}, mgr, handler)
+	mc := newMockMessageChannel("ctx-ch", "mock")
+	if err := gw.RegisterChannel(mc); err != nil {
+		t.Fatal(err)
+	}
+
+	mc.simulateInbound("hello", "chat-1", "msg-1")
+
+	if !ok {
+		t.Fatal("expected message target in context")
+	}
+	if got.ChannelID != "ctx-ch" || got.ChatID != "chat-1" || got.ChatType != "p2p" || got.ReplyToMessageID != "msg-1" {
+		t.Fatalf("unexpected message target: %+v", got)
+	}
+}
+
+func TestGatewaySendMessageInjectsMessageTargetIntoContext(t *testing.T) {
+	mgr := channel.NewManager()
+	var got requestctx.MessageTarget
+	var ok bool
+	handler := func(ctx context.Context, msg *cobot.InboundMessage, replyFunc ReplyFunc) error {
+		got, ok = requestctx.MessageTargetFromContext(ctx)
+		return nil
+	}
+
+	gw := New(Config{Addr: "127.0.0.1:0"}, mgr, handler)
+	mc := newMockMessageChannel("api-ctx-ch", "mock")
+	gw.RegisterChannel(mc)
+
+	if err := gw.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer gw.Shutdown(context.Background())
+
+	body := `{"chat_id":"chat-api","chat_type":"group","text":"hello"}`
+	resp, err := http.Post(
+		"http://"+gw.Addr()+"/api/v1/channels/api-ctx-ch/messages",
+		"application/json",
+		strings.NewReader(body),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	if !ok {
+		t.Fatal("expected message target in context")
+	}
+	if got.ChannelID != "api-ctx-ch" || got.ChatID != "chat-api" || got.ChatType != "group" || got.ReplyToMessageID != "" {
+		t.Fatalf("unexpected message target: %+v", got)
 	}
 }

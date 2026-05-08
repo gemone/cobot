@@ -4,10 +4,16 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	cobot "github.com/cobot-agent/cobot/pkg"
+	"github.com/cobot-agent/cobot/pkg/broker"
 )
+
+func isSQLITEBusy(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "SQLITE_BUSY")
+}
 
 // consumeLoop periodically consumes cron result messages from the broker.
 // On first call it acks all pre-existing messages to avoid re-delivering
@@ -62,15 +68,22 @@ func (s *Scheduler) ackAllExisting(ctx context.Context) {
 	}
 }
 
-// consumeOnce consumes unacknowledged cron result messages and delivers them locally.
 func (s *Scheduler) consumeOnce(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Warn("consumeOnce recovered from panic", "error", r)
 		}
 	}()
-	// sessionID is used as the consume session identity (separate from leader lease holderID).
-	msgs, err := s.broker.Consume(ctx, topicCronResult, "", s.sessionID, 50)
+
+	var msgs []*broker.Message
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		msgs, err = s.broker.Consume(ctx, topicCronResult, "", s.sessionID, 50)
+		if !isSQLITEBusy(err) {
+			break
+		}
+		time.Sleep(time.Duration(50<<attempt) * time.Millisecond)
+	}
 	if err != nil {
 		slog.Warn("failed to consume cron results", "error", err)
 		return
@@ -85,37 +98,84 @@ func (s *Scheduler) consumeOnce(ctx context.Context) {
 
 	ackIDs := make([]string, 0, len(msgs))
 	for _, msg := range msgs {
-		payload, err := decodeCronResult(msg)
-		if err != nil {
-			slog.Warn("failed to decode cron result", "msg_id", msg.ID, "error", err)
+		if s.shouldAckCronResult(notifyCtx, msg) {
 			ackIDs = append(ackIDs, msg.ID)
-			continue
 		}
-		if msg.ChannelID == "" {
-			ackIDs = append(ackIDs, msg.ID)
-			continue
-		}
-		content := formatCronResult(payload.JobName, payload.Result, payload.Error)
-		if s.deliverer != nil {
-			if payload.ChatID == "" {
-				slog.Warn("cron result has no chat_id, skipping delivery", "job_id", payload.JobID, "channel_id", msg.ChannelID)
-			} else {
-				title := fmt.Sprintf("Cron job %q completed", payload.JobName)
-				out := &cobot.OutboundMessage{
-					ReceiveID: payload.ChatID,
-					Text:      title + "\n\n" + content,
-				}
-				if _, err := s.deliverer.Send(notifyCtx, msg.ChannelID, out); err != nil {
-					slog.Warn("failed to deliver cron result", "channel_id", msg.ChannelID, "chat_id", payload.ChatID, "error", err)
-				}
-			}
-		}
-		ackIDs = append(ackIDs, msg.ID)
 	}
 	if len(ackIDs) > 0 {
 		if err := s.broker.AckAll(notifyCtx, ackIDs, s.sessionID); err != nil {
 			slog.Warn("failed to batch ack cron results", "error", err)
 		}
+	}
+}
+
+func (s *Scheduler) shouldAckCronResult(ctx context.Context, msg *broker.Message) bool {
+	payload, err := decodeCronResult(msg)
+	if err != nil {
+		slog.Warn("failed to decode cron result", "msg_id", msg.ID, "error", err)
+		return true
+	}
+
+	target := payload.deliveryTarget(msg.ChannelID)
+	if target.ChannelID == "" {
+		slog.Warn("cron result has no channel target, skipping delivery", "job_id", payload.JobID, "chat_id", target.ChatID)
+		return true
+	}
+	if s.deliverer == nil {
+		return true
+	}
+
+	content := formatCronResult(payload.JobName, payload.Result, payload.Error)
+	return s.deliverCronResult(ctx, payload, target, content)
+}
+
+func (s *Scheduler) deliverCronResult(ctx context.Context, payload *cronResultPayload, target DeliveryTarget, content string) bool {
+	if target.ChannelID == "" || target.ChatID == "" {
+		slog.Warn("cron result has no delivery target, skipping delivery", "job_id", payload.JobID, "channel_id", target.ChannelID, "chat_id", target.ChatID)
+		return false
+	}
+
+	if s.sendCronResult(ctx, payload.JobName, content, target) {
+		return true
+	}
+	if target.ReplyToMessageID == "" {
+		return false
+	}
+
+	slog.Warn("failed to reply with cron result, retrying without reply target", "channel_id", target.ChannelID, "chat_id", target.ChatID, "reply_to", target.ReplyToMessageID)
+	target.ReplyToMessageID = ""
+	return s.sendCronResult(ctx, payload.JobName, content, target)
+}
+
+func (s *Scheduler) sendCronResult(ctx context.Context, jobName, content string, target DeliveryTarget) bool {
+	_, err := cronResultSendSucceeded(s.deliverer.Send(ctx, target.ChannelID, cronResultOutboundMessage(jobName, content, target)))
+	if err == nil {
+		return true
+	}
+	slog.Warn("failed to deliver cron result", "channel_id", target.ChannelID, "chat_id", target.ChatID, "error", err)
+	return false
+}
+
+func cronResultSendSucceeded(result *cobot.SendResult, err error) (bool, error) {
+	if err != nil {
+		return false, err
+	}
+	if result == nil {
+		return false, fmt.Errorf("delivery returned no result")
+	}
+	if !result.Success {
+		return false, fmt.Errorf("delivery reported unsuccessful send")
+	}
+	return true, nil
+}
+
+func cronResultOutboundMessage(jobName, content string, target DeliveryTarget) *cobot.OutboundMessage {
+	title := fmt.Sprintf("Cron job %q completed", jobName)
+	return &cobot.OutboundMessage{
+		ReceiveID:        target.ChatID,
+		ReceiveType:      target.ChatType,
+		ReplyToMessageID: target.ReplyToMessageID,
+		Text:             title + "\n\n" + content,
 	}
 }
 
@@ -132,15 +192,15 @@ func (s *Scheduler) publishJobResult(job *Job, result string, runErr error, dura
 	payload := &cronResultPayload{
 		JobID:    job.ID,
 		JobName:  job.Name,
-		ChatID:   job.ChatID,
 		Result:   result,
 		RunAt:    time.Now(),
 		Duration: duration.Milliseconds(),
+		Delivery: job.Delivery,
 	}
 	if runErr != nil {
 		payload.Error = runErr.Error()
 	}
-	msg, err := newCronResultMessage(job.ChannelID, payload)
+	msg, err := newCronResultMessage(job.Delivery.ChannelID, payload)
 	if err != nil {
 		slog.Warn("failed to marshal cron result", "job_id", job.ID, "error", err)
 		return

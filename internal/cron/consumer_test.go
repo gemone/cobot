@@ -18,8 +18,10 @@ import (
 
 // fakeDeliverer records Send calls for test assertions.
 type fakeDeliverer struct {
-	mu    sync.Mutex
-	calls []deliverCall
+	mu      sync.Mutex
+	calls   []deliverCall
+	errors  []error
+	results []*cobot.SendResult
 }
 
 type deliverCall struct {
@@ -31,6 +33,18 @@ func (f *fakeDeliverer) Send(_ context.Context, channelID string, msg *cobot.Out
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, deliverCall{channelID: channelID, msg: msg})
+	if len(f.errors) > 0 {
+		err := f.errors[0]
+		f.errors = f.errors[1:]
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(f.results) > 0 {
+		result := f.results[0]
+		f.results = f.results[1:]
+		return result, nil
+	}
 	return &cobot.SendResult{Success: true, MessageID: "test-msg-id"}, nil
 }
 
@@ -215,6 +229,57 @@ func TestConsumeOnce_EmptyChannelID(t *testing.T) {
 	}
 }
 
+func TestConsumeOnce_UsesPayloadDeliveryChannelWhenBrokerChannelMissing(t *testing.T) {
+	t.Parallel()
+
+	br, cleanup := tempTestBroker(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	deliverer := &fakeDeliverer{}
+	store := NewStore(t.TempDir())
+	s := NewScheduler(store, noopExecuteFn, nil, br, deliverer)
+
+	payload := &cronResultPayload{
+		JobID:   "job-empty-broker-channel",
+		JobName: "test-payload-channel",
+		Result:  "hello",
+		Delivery: DeliveryTarget{
+			ChannelID: "channel-from-payload",
+			ChatID:    "oc_test_chat",
+			ChatType:  "group",
+		},
+	}
+	msg, err := newCronResultMessage("", payload)
+	if err != nil {
+		t.Fatalf("newCronResultMessage: %v", err)
+	}
+	if err := br.Publish(ctx, msg); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	s.consumeOnce(ctx)
+
+	calls := deliverer.getCalls()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 deliver call, got %d", len(calls))
+	}
+	if calls[0].channelID != "channel-from-payload" {
+		t.Fatalf("deliver channelID = %q, want %q", calls[0].channelID, "channel-from-payload")
+	}
+	if calls[0].msg.ReceiveType != "group" {
+		t.Fatalf("deliver msg.ReceiveType = %q, want %q", calls[0].msg.ReceiveType, "group")
+	}
+
+	msgs, err := br.Consume(ctx, topicCronResult, "", s.sessionID, 50)
+	if err != nil {
+		t.Fatalf("Consume after ack: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Errorf("expected 0 messages after ack, got %d", len(msgs))
+	}
+}
+
 // TestConsumeOnce_ValidChannelID verifies that messages with a non-empty
 // ChannelID are both delivered and acked.
 func TestConsumeOnce_ValidChannelID(t *testing.T) {
@@ -232,8 +297,10 @@ func TestConsumeOnce_ValidChannelID(t *testing.T) {
 	payload := &cronResultPayload{
 		JobID:   "job-valid-ch",
 		JobName: "test-valid-channel",
-		ChatID:  "oc_test_chat",
 		Result:  "world",
+		Delivery: DeliveryTarget{
+			ChatID: "oc_test_chat",
+		},
 	}
 	msg, err := newCronResultMessage("channel-123", payload)
 	if err != nil {
@@ -258,6 +325,9 @@ func TestConsumeOnce_ValidChannelID(t *testing.T) {
 	if calls[0].msg.ReceiveID != "oc_test_chat" {
 		t.Errorf("deliver msg.ReceiveID = %q, want %q", calls[0].msg.ReceiveID, "oc_test_chat")
 	}
+	if calls[0].msg.ReceiveType != "" {
+		t.Errorf("deliver msg.ReceiveType = %q, want empty", calls[0].msg.ReceiveType)
+	}
 	wantTitle := `Cron job "test-valid-channel" completed`
 	if !strings.Contains(calls[0].msg.Text, wantTitle) {
 		t.Errorf("deliver msg.Text missing title %q; got %q", wantTitle, calls[0].msg.Text)
@@ -272,5 +342,147 @@ func TestConsumeOnce_ValidChannelID(t *testing.T) {
 	}
 	if len(msgs) != 0 {
 		t.Errorf("expected 0 messages after ack, got %d", len(msgs))
+	}
+}
+
+func TestConsumeOnce_ReplyFailureFallsBackToPlainSend(t *testing.T) {
+	t.Parallel()
+
+	br, cleanup := tempTestBroker(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	deliverer := &fakeDeliverer{errors: []error{fmt.Errorf("reply failed"), nil}}
+	store := NewStore(t.TempDir())
+	s := NewScheduler(store, noopExecuteFn, nil, br, deliverer)
+
+	payload := &cronResultPayload{
+		JobID:   "job-reply-fallback",
+		JobName: "fallback",
+		Result:  "done",
+		Delivery: DeliveryTarget{
+			ChannelID:        "channel-123",
+			ChatID:           "oc_test_chat",
+			ChatType:         "group",
+			ReplyToMessageID: "om_source",
+		},
+	}
+	msg, err := newCronResultMessage("channel-123", payload)
+	if err != nil {
+		t.Fatalf("newCronResultMessage: %v", err)
+	}
+	if err := br.Publish(ctx, msg); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	s.consumeOnce(ctx)
+
+	calls := deliverer.getCalls()
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 deliver calls, got %d", len(calls))
+	}
+	if calls[0].msg.ReplyToMessageID != "om_source" {
+		t.Fatalf("first call reply target = %q, want %q", calls[0].msg.ReplyToMessageID, "om_source")
+	}
+	if calls[0].msg.ReceiveType != "group" {
+		t.Fatalf("first call receive type = %q, want %q", calls[0].msg.ReceiveType, "group")
+	}
+	if calls[1].msg.ReplyToMessageID != "" {
+		t.Fatalf("fallback call reply target = %q, want empty", calls[1].msg.ReplyToMessageID)
+	}
+	if calls[1].msg.ReceiveID != "oc_test_chat" {
+		t.Fatalf("fallback call receive id = %q, want %q", calls[1].msg.ReceiveID, "oc_test_chat")
+	}
+
+	msgs, err := br.Consume(ctx, topicCronResult, "", s.sessionID, 50)
+	if err != nil {
+		t.Fatalf("Consume after ack: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Errorf("expected 0 messages after ack, got %d", len(msgs))
+	}
+}
+
+func TestConsumeOnce_DeliveryFailureIsNotAcked(t *testing.T) {
+	t.Parallel()
+
+	br, cleanup := tempTestBroker(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	deliverer := &fakeDeliverer{errors: []error{fmt.Errorf("reply failed"), fmt.Errorf("plain send failed")}}
+	store := NewStore(t.TempDir())
+	s := NewScheduler(store, noopExecuteFn, nil, br, deliverer)
+
+	payload := &cronResultPayload{
+		JobID:   "job-delivery-failure",
+		JobName: "delivery-failure",
+		Result:  "done",
+		Delivery: DeliveryTarget{
+			ChannelID:        "channel-123",
+			ChatID:           "oc_test_chat",
+			ChatType:         "group",
+			ReplyToMessageID: "om_source",
+		},
+	}
+	msg, err := newCronResultMessage("channel-123", payload)
+	if err != nil {
+		t.Fatalf("newCronResultMessage: %v", err)
+	}
+	if err := br.Publish(ctx, msg); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	s.consumeOnce(ctx)
+
+	calls := deliverer.getCalls()
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 deliver calls, got %d", len(calls))
+	}
+
+	msgs, err := br.Consume(ctx, topicCronResult, "", s.sessionID, 50)
+	if err != nil {
+		t.Fatalf("Consume after failed delivery: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message to remain unacked, got %d", len(msgs))
+	}
+	remaining, err := decodeCronResult(msgs[0])
+	if err != nil {
+		t.Fatalf("decode remaining message: %v", err)
+	}
+	if remaining.JobID != payload.JobID {
+		t.Fatalf("remaining payload job_id = %q, want %q", remaining.JobID, payload.JobID)
+	}
+}
+
+func TestDeliverCronResult_TreatsNilResultAsFailure(t *testing.T) {
+	t.Parallel()
+
+	deliverer := &fakeDeliverer{results: []*cobot.SendResult{nil, {Success: true, MessageID: "fallback-msg"}}}
+	s := &Scheduler{deliverer: deliverer}
+	payload := &cronResultPayload{
+		JobID:   "job-nil-result",
+		JobName: "nil-result",
+		Result:  "done",
+		Delivery: DeliveryTarget{
+			ChannelID:        "channel-123",
+			ChatID:           "oc_test_chat",
+			ChatType:         "group",
+			ReplyToMessageID: "om_source",
+		},
+	}
+
+	s.deliverCronResult(context.Background(), payload, payload.Delivery, formatCronResult(payload.JobName, payload.Result, payload.Error))
+
+	calls := deliverer.getCalls()
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 deliver calls, got %d", len(calls))
+	}
+	if calls[0].msg.ReplyToMessageID != "om_source" {
+		t.Fatalf("first call reply target = %q, want %q", calls[0].msg.ReplyToMessageID, "om_source")
+	}
+	if calls[1].msg.ReplyToMessageID != "" {
+		t.Fatalf("fallback call reply target = %q, want empty", calls[1].msg.ReplyToMessageID)
 	}
 }

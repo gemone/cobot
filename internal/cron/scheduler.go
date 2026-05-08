@@ -80,14 +80,22 @@ func (s *Scheduler) Start(ctx context.Context) error {
 		return fmt.Errorf("load jobs: %w", err)
 	}
 
-	acquired, err := s.broker.TryAcquire(ctx, schedulerLeaseKey, s.holderID, leaseTTL)
-	if err != nil {
-		slog.Warn("failed to acquire scheduler lease", "error", err)
+	var acquired bool
+	for attempt := 0; attempt < 3; attempt++ {
+		var err error
+		acquired, err = s.broker.TryAcquire(ctx, schedulerLeaseKey, s.holderID, leaseTTL)
+		if !isSQLITEBusy(err) {
+			if err != nil {
+				slog.Warn("failed to acquire scheduler lease", "error", err)
+			}
+			break
+		}
+		time.Sleep(time.Duration(50<<attempt) * time.Millisecond)
 	}
 
 	if acquired {
 		s.isLeader.Store(true)
-		slog.Info("acquired cron scheduler leader lease", "holder", s.holderID)
+		slog.Info("acquired cron scheduler leader lease", "holder", s.holderID, "jobs", len(jobs))
 		for _, job := range jobs {
 			if job.Status != StatusActive {
 				continue
@@ -95,6 +103,8 @@ func (s *Scheduler) Start(ctx context.Context) error {
 			if err := s.scheduleJob(job); err != nil {
 				slog.Warn("failed to schedule job on start",
 					"job_id", job.ID, "error", err)
+			} else {
+				slog.Info("scheduled job on start", "job_id", job.ID, "name", job.Name, "schedule", job.Schedule)
 			}
 		}
 		s.cron.Start()
@@ -105,8 +115,11 @@ func (s *Scheduler) Start(ctx context.Context) error {
 		go s.cleanupLoop(ctx)
 	} else {
 		s.isLeader.Store(false)
-		slog.Info("running as cron scheduler follower", "holder", s.holderID)
+		slog.Info("running as cron scheduler follower", "holder", s.holderID, "pending_jobs", len(jobs))
 	}
+
+	s.wg.Add(1)
+	go s.campaignLoop(ctx)
 
 	s.wg.Add(1)
 	go s.consumeLoop(ctx)
@@ -393,7 +406,7 @@ func (s *Scheduler) runJob(jobID string) {
 	// Load the latest job state from the store to avoid using a stale pointer.
 	job, err := s.store.Read(jobID, "")
 	if err != nil {
-		slog.Debug("cron job no longer exists in store", "job_id", jobID, "error", err)
+		slog.Warn("cron job no longer exists in store, skipping", "job_id", jobID, "error", err)
 		return
 	}
 
@@ -401,14 +414,15 @@ func (s *Scheduler) runJob(jobID string) {
 	defer cancel()
 
 	start := time.Now()
+	slog.Info("cron job firing", "job_id", job.ID, "name", job.Name)
 	result, err := s.executeFn(ctx, job.ID, job.Prompt, job.Model)
 	duration := time.Since(start)
 	if err != nil {
 		slog.Warn("cron job execution failed",
 			"job_id", job.ID, "error", err)
 	} else {
-		slog.Debug("cron job executed",
-			"job_id", job.ID, "result_len", len(result))
+		slog.Info("cron job executed",
+			"job_id", job.ID, "name", job.Name, "result_len", len(result), "duration_ms", duration.Milliseconds())
 	}
 
 	now := time.Now()

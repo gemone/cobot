@@ -384,25 +384,7 @@ func configureCronTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.M
 
 	a.SetBroker(brokerDB)
 	a.SetCronScheduler(scheduler)
-	a.RegisterTool(tools.NewCronTool(scheduler,
-		tools.WithCronChannelIDFn(func() string {
-			ids := channelMgr.AllAliveIDs()
-			if len(ids) > 0 {
-				return ids[0]
-			}
-			return ""
-		}),
-		tools.WithCronChatIDFn(func() string {
-			// Return the most recent chat ID across all active agents.
-			// This is set by the gateway handler before each Prompt call.
-			var last string
-			a.ChatIDs().Range(func(_, v any) bool {
-				last = v.(string)
-				return true
-			})
-			return last
-		}),
-	))
+	a.RegisterTool(tools.NewCronTool(scheduler))
 }
 
 func configureSkillSyncer(a *agent.Agent, store *memory.Store, ws *workspace.Workspace, agentCfg *config.AgentConfig) {
@@ -470,10 +452,6 @@ func ConfigureGateway(res *Result, gwCfg cobot.GatewayConfig, channels []cobot.C
 		candidate := newSubAgent(res.Agent, registry, filtered)
 		actual, _ := subAgents.LoadOrStore(agentKey, candidate)
 		sub := actual.(*agent.Agent)
-
-		// Store the current chat ID so tools (e.g. cron) can capture it
-		// for result delivery.
-		res.Agent.SetCurrentChatID(agentKey, msg.ChatID)
 
 		resp, err := sub.Prompt(ctx, msg.Text)
 		if err != nil {

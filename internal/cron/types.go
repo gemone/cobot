@@ -10,13 +10,28 @@ import (
 
 // cronResultPayload is the message payload for cron task execution results.
 type cronResultPayload struct {
-	JobID    string    `json:"job_id"`
-	JobName  string    `json:"job_name"`
-	ChatID   string    `json:"chat_id,omitempty"`
-	Result   string    `json:"result"`
-	Error    string    `json:"error,omitempty"`
-	RunAt    time.Time `json:"run_at"`
-	Duration int64     `json:"duration_ms"`
+	JobID    string         `json:"job_id"`
+	JobName  string         `json:"job_name"`
+	Result   string         `json:"result"`
+	Error    string         `json:"error,omitempty"`
+	RunAt    time.Time      `json:"run_at"`
+	Duration int64          `json:"duration_ms"`
+	Delivery DeliveryTarget `json:"delivery,omitempty"`
+}
+
+type DeliveryTarget struct {
+	ChannelID        string `json:"channel_id,omitempty"         yaml:"channel_id,omitempty"`
+	ChatID           string `json:"chat_id,omitempty"            yaml:"chat_id,omitempty"`
+	ChatType         string `json:"chat_type,omitempty"          yaml:"chat_type,omitempty"`
+	ReplyToMessageID string `json:"reply_to_message_id,omitempty" yaml:"reply_to_message_id,omitempty"`
+}
+
+func (p *cronResultPayload) deliveryTarget(fallbackChannelID string) DeliveryTarget {
+	target := p.Delivery
+	if target.ChannelID == "" {
+		target.ChannelID = fallbackChannelID
+	}
+	return target
 }
 
 // newCronResultMessage builds a cron result message.

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cobot-agent/cobot/internal/channel"
+	"github.com/cobot-agent/cobot/internal/requestctx"
 
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
@@ -158,15 +159,17 @@ func (g *Gateway) RegisterChannel(ch cobot.MessageChannel) error {
 
 	// Wire OnMessage → dedup → agent handler.
 	ch.OnMessage(func(ctx context.Context, msg *cobot.InboundMessage) {
-		if msg.MessageID != "" {
-			dedupKey := id + ":" + msg.MessageID
-			if !g.recordDedup(dedupKey) {
+		if !g.shouldHandleMessage(id, msg) {
+			if msg.MessageID != "" {
 				slog.Debug("gateway: skipping duplicate message", "channel", id, "message_id", msg.MessageID)
-				return
 			}
-		} else {
+			return
+		}
+		if msg.MessageID == "" {
 			slog.Debug("gateway: message has no MessageID, skipping dedup", "channel", id)
 		}
+
+		ctx = withMessageTarget(ctx, id, msg)
 
 		replyFunc := func(out *cobot.OutboundMessage) (*cobot.SendResult, error) {
 			if out.ReceiveID == "" {
@@ -243,6 +246,20 @@ func (g *Gateway) RegisterChannel(ch cobot.MessageChannel) error {
 	}
 	slog.Info("gateway: channel registered", "channel", id, "platform", ch.Platform())
 	return nil
+}
+
+func withMessageTarget(ctx context.Context, channelID string, msg *cobot.InboundMessage) context.Context {
+	return requestctx.WithMessageTarget(ctx, requestctx.NewMessageTarget(channelID, msg))
+}
+
+func (g *Gateway) shouldHandleMessage(channelID string, msg *cobot.InboundMessage) bool {
+	if msg.MessageID == "" {
+		return true
+	}
+
+	g.dedupMu.Lock()
+	defer g.dedupMu.Unlock()
+	return g.recordDedup(channelID + ":" + msg.MessageID)
 }
 
 // UnregisterChannel removes a channel previously added via RegisterChannel.
@@ -543,6 +560,7 @@ func (g *Gateway) sendChannelMessage(w http.ResponseWriter, r *http.Request, cha
 		ChatType: req.ChatType,
 		Text:     req.Text,
 	}
+	ctx := withMessageTarget(r.Context(), channelID, msg)
 
 	// Collect the reply synchronously and send it through the channel.
 	var reply *cobot.OutboundMessage
@@ -557,10 +575,10 @@ func (g *Gateway) sendChannelMessage(w http.ResponseWriter, r *http.Request, cha
 			out.ReceiveType = req.ChatType
 		}
 		reply = out
-		return mc.Send(r.Context(), out)
+		return mc.Send(ctx, out)
 	}
 
-	if err := g.handler(r.Context(), msg, replyFunc); err != nil {
+	if err := g.handler(ctx, msg, replyFunc); err != nil {
 		slog.Error("gateway: sendChannelMessage handler failed",
 			"channel_id", channelID,
 			"chat_id", req.ChatID,
