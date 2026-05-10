@@ -3,7 +3,7 @@
   "properties": {
     "action": {
       "type": "string",
-      "enum": ["create", "list", "delete", "pause", "resume", "list_runs"],
+      "enum": ["create", "list", "delete", "pause", "resume", "bind", "list_runs"],
       "description": "Action to perform"
     },
     "schedule": {
@@ -16,11 +16,11 @@
     },
     "job_id": {
       "type": "string",
-      "description": "Job ID for list_runs action"
+      "description": "Stable job ID for list_runs or bind actions"
     },
     "read_id": {
       "type": "string",
-      "description": "Opaque token from a prior list/get operation, required for delete/pause/resume actions. Changes on every read — always use the most recent value."
+      "description": "Opaque token from a prior list/get operation, required for delete/pause/resume actions. Also accepted by bind for backward compatibility, but prefer job_id."
     },
     "name": {
       "type": "string",

@@ -26,6 +26,7 @@ const (
 	actionDelete   = "delete"
 	actionPause    = "pause"
 	actionResume   = "resume"
+	actionBind     = "bind"
 	actionListRuns = "list_runs"
 )
 
@@ -51,7 +52,7 @@ func NewCronTool(scheduler *cron.Scheduler, opts ...CronToolOption) *CronTool {
 func (t *CronTool) Name() string { return "cron" }
 
 func (t *CronTool) Description() string {
-	return `Schedule and manage recurring and one-shot tasks. Actions: create (schedule a new job), list (show all jobs), delete (remove a job), pause (temporarily stop a job), resume (restart a paused job), list_runs (show execution history for a job). Use cron expressions like "0 9 * * *" for recurring tasks or ISO timestamps for one-shot tasks. Results are stored in per-job run databases and can be viewed with list_runs.`
+	return `Schedule and manage recurring and one-shot tasks. Actions: create (schedule a new job), list (show all jobs), delete (remove a job), pause (temporarily stop a job), resume (restart a paused job), bind (attach an existing job to the current conversation for result delivery; accepts job_id or auto-binds when there is only one missing target), list_runs (show execution history for a job). Use cron expressions like "0 9 * * *" for recurring tasks or ISO timestamps for one-shot tasks. Results are stored in per-job run databases and can be viewed with list_runs.`
 }
 
 func (t *CronTool) Parameters() json.RawMessage {
@@ -86,10 +87,12 @@ func (t *CronTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 		return t.handlePause(params)
 	case actionResume:
 		return t.handleResume(params)
+	case actionBind:
+		return t.handleBind(ctx, params)
 	case actionListRuns:
 		return t.handleListRuns(params)
 	default:
-		return "", fmt.Errorf("unknown action: %s (valid: %s, %s, %s, %s, %s, %s)", params.Action, actionCreate, actionList, actionDelete, actionPause, actionResume, actionListRuns)
+		return "", fmt.Errorf("unknown action: %s (valid: %s, %s, %s, %s, %s, %s, %s)", params.Action, actionCreate, actionList, actionDelete, actionPause, actionResume, actionBind, actionListRuns)
 	}
 }
 
@@ -148,6 +151,7 @@ func applyMessageTarget(job *cron.Job, ctx context.Context) {
 		ChannelID:        target.ChannelID,
 		ChatID:           target.ChatID,
 		ChatType:         target.ChatType,
+		ReceiveIDType:    target.ReceiveIDType,
 		ReplyToMessageID: target.ReplyToMessageID,
 	}
 }
@@ -174,8 +178,12 @@ func (t *CronTool) handleList() (string, error) {
 		if job.NextRun != nil {
 			nextRun = job.NextRun.Format(time.RFC3339)
 		}
-		fmt.Fprintf(&b, "  %s | %s | %s | status=%s | runs=%d | last=%s | next=%s | read_id=%s\n",
-			job.ID, job.Name, job.Schedule, job.Status, job.RunCount, lastRun, nextRun, job.ReadID())
+		delivery := "delivery=ok"
+		if job.Delivery.ChannelID == "" || job.Delivery.ChatID == "" {
+			delivery = fmt.Sprintf("delivery=missing(use bind %s or bind with no args if it is the only unbound job)", job.ID)
+		}
+		fmt.Fprintf(&b, "  %s | %s | %s | status=%s | runs=%d | last=%s | next=%s | %s\n",
+			job.ID, job.Name, job.Schedule, job.Status, job.RunCount, lastRun, nextRun, delivery)
 	}
 	return b.String(), nil
 }
@@ -205,6 +213,31 @@ func (t *CronTool) handlePause(params cronParams) (string, error) {
 
 func (t *CronTool) handleResume(params cronParams) (string, error) {
 	return t.withReadID(params.ReadID, "resume", t.scheduler.ResumeJob, "resumed")
+}
+
+func (t *CronTool) handleBind(ctx context.Context, params cronParams) (string, error) {
+	target, ok := requestctx.MessageTargetFromContext(ctx)
+	if !ok || target.ChannelID == "" || target.ChatID == "" {
+		return "", fmt.Errorf("bind action requires a current conversation target")
+	}
+	selector := strings.TrimSpace(params.JobID)
+	if selector == "" {
+		selector = strings.TrimSpace(params.ReadID)
+	}
+	jobID, err := t.scheduler.ResolveBindJobID(selector)
+	if err != nil {
+		return "", err
+	}
+	if err := t.scheduler.BindJobTargetByID(jobID, cron.DeliveryTarget{
+		ChannelID:        target.ChannelID,
+		ChatID:           target.ChatID,
+		ChatType:         target.ChatType,
+		ReceiveIDType:    target.ReceiveIDType,
+		ReplyToMessageID: target.ReplyToMessageID,
+	}); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Job %s bound to current conversation.", jobID), nil
 }
 
 func (t *CronTool) handleListRuns(params cronParams) (string, error) {

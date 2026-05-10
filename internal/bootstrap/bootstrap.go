@@ -467,8 +467,13 @@ func ConfigureGateway(res *Result, gwCfg cobot.GatewayConfig, channels []cobot.C
 	gw := gateway.New(gateway.Config{Addr: gwCfg.Addr, APIKey: gwCfg.APIKey}, res.ChannelMgr, handler)
 
 	// Wire slash commands: create registry, inject Agent and cron, set help Data.
-	cmdReg := command.New(res.Agent, nil)
+	var cronScheduler *cron.Scheduler
+	if s, ok := res.Agent.CronScheduler().(*cron.Scheduler); ok {
+		cronScheduler = s
+	}
+	cmdReg := command.New(res.Agent, cronScheduler)
 	cmdReg.SetHelpData()
+	res.SetCommandRegistry(cmdReg)
 	gw.SetCommandRegistry(cmdReg)
 
 	// Register reverse channel factory for dynamic registration via REST API.

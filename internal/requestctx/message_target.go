@@ -13,6 +13,7 @@ type MessageTarget struct {
 	ChannelID        string
 	ChatID           string
 	ChatType         string
+	ReceiveIDType    string
 	ReplyToMessageID string
 }
 
@@ -24,6 +25,7 @@ func NewMessageTarget(channelID string, msg *cobot.InboundMessage) MessageTarget
 		ChannelID:        channelID,
 		ChatID:           msg.ChatID,
 		ChatType:         msg.ChatType,
+		ReceiveIDType:    "chat_id",
 		ReplyToMessageID: msg.MessageID,
 	}
 }

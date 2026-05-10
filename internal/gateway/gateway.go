@@ -178,6 +178,11 @@ func (g *Gateway) RegisterChannel(ch cobot.MessageChannel) error {
 			if out.ReceiveType == "" {
 				out.ReceiveType = msg.ChatType
 			}
+			if out.ReceiveIDType == "" {
+				if target, ok := requestctx.MessageTargetFromContext(ctx); ok {
+					out.ReceiveIDType = target.ReceiveIDType
+				}
+			}
 			// Thread the bot's reply onto the user's message (not onto itself).
 			if out.ReplyToMessageID == "" && msg.MessageID != "" {
 				out.ReplyToMessageID = msg.MessageID
@@ -573,6 +578,11 @@ func (g *Gateway) sendChannelMessage(w http.ResponseWriter, r *http.Request, cha
 		}
 		if out.ReceiveType == "" {
 			out.ReceiveType = req.ChatType
+		}
+		if out.ReceiveIDType == "" {
+			if target, ok := requestctx.MessageTargetFromContext(ctx); ok {
+				out.ReceiveIDType = target.ReceiveIDType
+			}
 		}
 		reply = out
 		return mc.Send(ctx, out)

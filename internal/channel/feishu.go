@@ -277,6 +277,10 @@ func (ch *FeishuChannel) Send(ctx context.Context, msg *cobot.OutboundMessage) (
 	if msgType == "" {
 		msgType = cobot.OutboundMsgTypeText
 	}
+	receiveIDType := msg.ReceiveIDType
+	if receiveIDType == "" {
+		receiveIDType = "chat_id"
+	}
 
 	var content string
 	switch msgType {
@@ -285,10 +289,11 @@ func (ch *FeishuChannel) Send(ctx context.Context, msg *cobot.OutboundMessage) (
 		if content == "" {
 			return nil, fmt.Errorf("feishu Send: rich_content required for %s", msgType)
 		}
+		return ch.sendRichMessage(ctx, msg.ReceiveID, receiveIDType, msgType, content, msg.ReplyToMessageID)
 	case cobot.OutboundMsgTypeImage:
-		return ch.sendImageKey(ctx, msg.ReceiveID, msg.ImageKey)
+		return ch.sendImageKey(ctx, msg.ReceiveID, receiveIDType, msg.ImageKey)
 	case cobot.OutboundMsgTypeAudio, cobot.OutboundMsgTypeVideo, cobot.OutboundMsgTypeFile, cobot.OutboundMsgTypeMedia:
-		return ch.sendMediaKey(ctx, msg.ReceiveID, msg.MediaKey, string(msgType))
+		return ch.sendMediaKey(ctx, msg.ReceiveID, receiveIDType, msg.MediaKey, string(msgType))
 	case cobot.OutboundMsgTypeText:
 		content, msgType = buildPostPayload(msg.Text)
 	default:
@@ -296,15 +301,13 @@ func (ch *FeishuChannel) Send(ctx context.Context, msg *cobot.OutboundMessage) (
 	}
 
 	slog.Info("feishu: Send dispatch", "channel", ch.ID(), "chat_id", msg.ReceiveID, "msg_type", msgType, "reply_to", msg.ReplyToMessageID, "text_len", len(msg.Text))
-
-	// Use direct HTTP for reply_to_message_id support (SDK builder doesn't support it).
-	if msg.ReplyToMessageID != "" {
-		return ch.sendReplyTo(ctx, msg)
+	if msgType == cobot.OutboundMsgTypePost || msgType == cobot.OutboundMsgTypeInteractive {
+		return ch.sendRichMessage(ctx, msg.ReceiveID, receiveIDType, msgType, content, msg.ReplyToMessageID)
 	}
 
 	resp, err := ch.client.Im.V1.Message.Create(ctx,
 		larkim.NewCreateMessageReqBuilder().
-			ReceiveIdType("chat_id").
+			ReceiveIdType(receiveIDType).
 			Body(larkim.NewCreateMessageReqBodyBuilder().
 				ReceiveId(msg.ReceiveID).
 				MsgType(string(msgType)).
@@ -315,10 +318,19 @@ func (ch *FeishuChannel) Send(ctx context.Context, msg *cobot.OutboundMessage) (
 	if err != nil {
 		return &cobot.SendResult{Success: false}, fmt.Errorf("feishu send message: %w", err)
 	}
+	if resp == nil {
+		return &cobot.SendResult{Success: false}, fmt.Errorf("feishu send message: empty response")
+	}
+	if !resp.Success() {
+		return &cobot.SendResult{Success: false}, fmt.Errorf("feishu send message API error %d: %s", resp.Code, resp.Msg)
+	}
 
 	messageID := ""
 	if resp != nil && resp.Data != nil {
 		messageID = ptrStr(resp.Data.MessageId)
+	}
+	if messageID == "" {
+		return &cobot.SendResult{Success: false}, fmt.Errorf("feishu send message: missing message_id in response")
 	}
 	if messageID != "" {
 		ch.sentIDs.Store(messageID, time.Now())
@@ -334,6 +346,10 @@ func (ch *FeishuChannel) sendReplyTo(ctx context.Context, msg *cobot.OutboundMes
 	if msgType == "" {
 		msgType = cobot.OutboundMsgTypeText
 	}
+	receiveIDType := msg.ReceiveIDType
+	if receiveIDType == "" {
+		receiveIDType = "chat_id"
+	}
 
 	var content string
 	switch msgType {
@@ -342,43 +358,54 @@ func (ch *FeishuChannel) sendReplyTo(ctx context.Context, msg *cobot.OutboundMes
 	default:
 		content, msgType = buildPostPayload(msg.Text)
 	}
+	return ch.sendRichMessage(ctx, msg.ReceiveID, receiveIDType, msgType, content, msg.ReplyToMessageID)
+}
 
+func (ch *FeishuChannel) sendRichMessage(ctx context.Context, receiveID, receiveIDType string, msgType cobot.OutboundMessageType, content, replyTo string) (*cobot.SendResult, error) {
 	body := map[string]any{
-		"msg_type":        msgType,
-		"content":         content,
-		"reply_in_thread": false,
+		"receive_id": receiveID,
+		"msg_type":   msgType,
+		"content":    content,
+	}
+	if replyTo != "" {
+		delete(body, "receive_id")
+		body["reply_in_thread"] = false
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return nil, fmt.Errorf("feishu reply marshal: %w", err)
+		return nil, fmt.Errorf("feishu rich message marshal: %w", err)
 	}
 
 	token, err := ch.getTenantToken(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("feishu reply: get token: %w", err)
+		return nil, fmt.Errorf("feishu rich message: get token: %w", err)
 	}
 
-	url := fmt.Sprintf("https://open.%s.cn/open-apis/im/v1/messages/%s/reply", ch.config.Domain, msg.ReplyToMessageID)
-	slog.Info("feishu: sendReplyTo", "url", url, "reply_to", msg.ReplyToMessageID, "msg_type", msgType, "payload", string(payload))
+	url := fmt.Sprintf("https://open.%s.cn/open-apis/im/v1/messages?receive_id_type=%s", ch.config.Domain, receiveIDType)
+	logKey := "feishu: sendRichMessage"
+	if replyTo != "" {
+		url = fmt.Sprintf("https://open.%s.cn/open-apis/im/v1/messages/%s/reply", ch.config.Domain, replyTo)
+		logKey = "feishu: sendReplyTo"
+	}
+	slog.Info(logKey, "url", url, "reply_to", replyTo, "msg_type", msgType, "payload", string(payload))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
-		return nil, fmt.Errorf("feishu reply request: %w", err)
+		return nil, fmt.Errorf("feishu rich message request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := ch.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("feishu reply: %w", err)
+		return nil, fmt.Errorf("feishu rich message: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
-	slog.Info("feishu: reply API response", "status", resp.StatusCode, "body", string(respBody))
+	slog.Info("feishu: rich message API response", "status", resp.StatusCode, "reply_to", replyTo, "body", string(respBody))
 	if resp.StatusCode >= 300 {
-		slog.Warn("feishu: reply failed", "status", resp.StatusCode, "body", string(respBody))
-		return &cobot.SendResult{Success: false}, fmt.Errorf("feishu reply returned %d: %s", resp.StatusCode, respBody)
+		return &cobot.SendResult{Success: false}, fmt.Errorf("feishu rich message returned %d: %s", resp.StatusCode, respBody)
 	}
 
 	var result struct {
@@ -389,17 +416,18 @@ func (ch *FeishuChannel) sendReplyTo(ctx context.Context, msg *cobot.OutboundMes
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		return &cobot.SendResult{Success: false}, fmt.Errorf("feishu reply parse: %w", err)
+		return &cobot.SendResult{Success: false}, fmt.Errorf("feishu rich message parse: %w", err)
 	}
 	if result.Code != 0 {
-		return &cobot.SendResult{Success: false}, fmt.Errorf("feishu reply API error %d: %s", result.Code, result.Msg)
+		return &cobot.SendResult{Success: false}, fmt.Errorf("feishu rich message API error %d: %s", result.Code, result.Msg)
+	}
+	if result.Data.MessageID == "" {
+		return &cobot.SendResult{Success: false}, fmt.Errorf("feishu rich message: missing message_id in response")
 	}
 
-	if result.Data.MessageID != "" {
-		ch.sentIDs.Store(result.Data.MessageID, time.Now())
-	}
+	ch.sentIDs.Store(result.Data.MessageID, time.Now())
 
-	slog.Debug("feishu: reply sent", "channel", ch.ID(), "message_id", result.Data.MessageID, "reply_to", msg.ReplyToMessageID)
+	slog.Debug("feishu: rich message sent", "channel", ch.ID(), "message_id", result.Data.MessageID, "reply_to", replyTo, "type", msgType)
 	return &cobot.SendResult{Success: true, MessageID: result.Data.MessageID}, nil
 }
 
@@ -453,7 +481,7 @@ func (ch *FeishuChannel) getTenantToken(ctx context.Context) (string, error) {
 }
 
 // sendImageKey sends an image by Feishu resource key.
-func (ch *FeishuChannel) sendImageKey(ctx context.Context, chatID, imageKey string) (*cobot.SendResult, error) {
+func (ch *FeishuChannel) sendImageKey(ctx context.Context, receiveID, receiveIDType, imageKey string) (*cobot.SendResult, error) {
 	if imageKey == "" {
 		return nil, fmt.Errorf("feishu sendImageKey: image_key is required")
 	}
@@ -461,9 +489,9 @@ func (ch *FeishuChannel) sendImageKey(ctx context.Context, chatID, imageKey stri
 	content, _ := json.Marshal(payload)
 	resp, err := ch.client.Im.V1.Message.Create(ctx,
 		larkim.NewCreateMessageReqBuilder().
-			ReceiveIdType("chat_id").
+			ReceiveIdType(receiveIDType).
 			Body(larkim.NewCreateMessageReqBodyBuilder().
-				ReceiveId(chatID).
+				ReceiveId(receiveID).
 				MsgType("image").
 				Content(string(content)).
 				Build()).
@@ -537,7 +565,7 @@ func unicodeToFeishuEmoji(unicode string) string {
 	}
 	return ""
 }
-func (ch *FeishuChannel) sendMediaKey(ctx context.Context, chatID, mediaKey, msgType string) (*cobot.SendResult, error) {
+func (ch *FeishuChannel) sendMediaKey(ctx context.Context, receiveID, receiveIDType, mediaKey, msgType string) (*cobot.SendResult, error) {
 	if mediaKey == "" {
 		return nil, fmt.Errorf("feishu sendMediaKey: media_key is required")
 	}
@@ -545,9 +573,9 @@ func (ch *FeishuChannel) sendMediaKey(ctx context.Context, chatID, mediaKey, msg
 	content, _ := json.Marshal(payload)
 	resp, err := ch.client.Im.V1.Message.Create(ctx,
 		larkim.NewCreateMessageReqBuilder().
-			ReceiveIdType("chat_id").
+			ReceiveIdType(receiveIDType).
 			Body(larkim.NewCreateMessageReqBodyBuilder().
-				ReceiveId(chatID).
+				ReceiveId(receiveID).
 				MsgType(msgType).
 				Content(string(content)).
 				Build()).

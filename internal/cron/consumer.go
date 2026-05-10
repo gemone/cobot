@@ -174,6 +174,7 @@ func cronResultOutboundMessage(jobName, content string, target DeliveryTarget) *
 	return &cobot.OutboundMessage{
 		ReceiveID:        target.ChatID,
 		ReceiveType:      target.ChatType,
+		ReceiveIDType:    target.ReceiveIDType,
 		ReplyToMessageID: target.ReplyToMessageID,
 		Text:             title + "\n\n" + content,
 	}

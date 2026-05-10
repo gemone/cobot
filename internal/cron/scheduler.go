@@ -104,6 +104,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 				slog.Warn("failed to schedule job on start",
 					"job_id", job.ID, "error", err)
 			} else {
+				s.persistScheduledJob(job)
 				slog.Info("scheduled job on start", "job_id", job.ID, "name", job.Name, "schedule", job.Schedule)
 			}
 		}
@@ -228,17 +229,21 @@ func (s *Scheduler) AddJob(job *Job) error {
 			slog.Warn("failed to schedule persisted job", "job_id", job.ID, "error", err)
 			// Job is persisted; leader will pick it up via syncJobs.
 		}
-		// Persist the NextRun that was set by scheduleJob
-		if job.NextRun != nil {
-			updatedJob := *job
-			if err := s.store.Update(&updatedJob); err != nil {
-				slog.Warn("failed to persist next run for job", "job_id", job.ID, "error", err)
-			} else {
-				*job = updatedJob
-			}
-		}
+		s.persistScheduledJob(job)
 	}
 	return nil
+}
+
+func (s *Scheduler) persistScheduledJob(job *Job) {
+	if job == nil || job.NextRun == nil {
+		return
+	}
+	updatedJob := *job
+	if err := s.store.Update(&updatedJob); err != nil {
+		slog.Warn("failed to persist next run for job", "job_id", job.ID, "error", err)
+		return
+	}
+	*job = updatedJob
 }
 
 // RemoveJob removes a job from cron and deletes it from the store.
@@ -301,6 +306,63 @@ func (s *Scheduler) ResumeJob(readID string) error {
 	return s.store.Update(job) // Update regenerates token
 }
 
+func (s *Scheduler) BindJobTarget(readID string, target DeliveryTarget) error {
+	jobID, token, err := parseSchedulerReadID(readID)
+	if err != nil {
+		return err
+	}
+	if target.ChannelID == "" || target.ChatID == "" {
+		return fmt.Errorf("delivery target requires channel_id and chat_id")
+	}
+
+	job, err := s.store.Read(jobID, token)
+	if err != nil {
+		return err
+	}
+	job.Delivery = target
+	return s.store.Update(job)
+}
+
+func (s *Scheduler) BindJobTargetByID(jobID string, target DeliveryTarget) error {
+	if target.ChannelID == "" || target.ChatID == "" {
+		return fmt.Errorf("delivery target requires channel_id and chat_id")
+	}
+	job, err := s.store.Read(jobID, "")
+	if err != nil {
+		return err
+	}
+	job.Delivery = target
+	return s.store.Update(job)
+}
+
+func (s *Scheduler) ResolveBindJobID(selector string) (string, error) {
+	if selector != "" {
+		if jobID, _, err := ParseReadID(selector); err == nil {
+			return jobID, nil
+		}
+		return selector, nil
+	}
+
+	jobs, err := s.ListJobs()
+	if err != nil {
+		return "", err
+	}
+	var missing []*Job
+	for _, job := range jobs {
+		if job.Delivery.ChannelID == "" || job.Delivery.ChatID == "" {
+			missing = append(missing, job)
+		}
+	}
+	switch len(missing) {
+	case 0:
+		return "", fmt.Errorf("no cron jobs need binding")
+	case 1:
+		return missing[0].ID, nil
+	default:
+		return "", fmt.Errorf("multiple cron jobs need binding; specify job_id")
+	}
+}
+
 // ListJobs returns all jobs from the store.
 func (s *Scheduler) ListJobs() ([]*Job, error) {
 	return s.store.List()
@@ -357,13 +419,12 @@ func (s *Scheduler) scheduleCronExprLocked(job *Job) error {
 	if err != nil {
 		return fmt.Errorf("invalid cron expression %q: %w", job.Schedule, err)
 	}
-
-	s.registerEntry(job, schedule)
-
-	next := s.cron.Entry(s.jobs[job.ID]).Next
+	next := schedule.Next(time.Now())
 	if !next.IsZero() {
 		job.NextRun = &next
 	}
+
+	s.registerEntry(job, schedule)
 
 	return nil
 }

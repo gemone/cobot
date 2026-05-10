@@ -115,7 +115,9 @@ func (s *Scheduler) rescheduleAllJobs() {
 		}
 		if err := s.scheduleJob(job); err != nil {
 			slog.Warn("failed to re-schedule job", "job_id", job.ID, "error", err)
+			continue
 		}
+		s.persistScheduledJob(job)
 	}
 }
 
@@ -164,12 +166,15 @@ func (s *Scheduler) syncJobs() {
 				slog.Warn("sync: failed to schedule job", "job_id", id, "error", err)
 				continue
 			}
+			s.persistScheduledJob(sj)
 			slog.Info("sync: scheduled new job", "job_id", id, "name", sj.Name)
 		} else if curSchedule := s.jobSchedules[id]; curSchedule != sj.Schedule {
 			slog.Info("sync: rescheduling job with changed schedule", "job_id", id)
 			if err := s.scheduleJobLocked(sj); err != nil {
 				slog.Warn("sync: failed to reschedule job", "job_id", id, "error", err)
+				continue
 			}
+			s.persistScheduledJob(sj)
 		}
 	}
 }

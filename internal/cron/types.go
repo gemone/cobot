@@ -23,6 +23,7 @@ type DeliveryTarget struct {
 	ChannelID        string `json:"channel_id,omitempty"         yaml:"channel_id,omitempty"`
 	ChatID           string `json:"chat_id,omitempty"            yaml:"chat_id,omitempty"`
 	ChatType         string `json:"chat_type,omitempty"          yaml:"chat_type,omitempty"`
+	ReceiveIDType    string `json:"receive_id_type,omitempty"    yaml:"receive_id_type,omitempty"`
 	ReplyToMessageID string `json:"reply_to_message_id,omitempty" yaml:"reply_to_message_id,omitempty"`
 }
 

@@ -51,6 +51,18 @@ func TestSandboxConfig_IsAllowed(t *testing.T) {
 	}
 }
 
+func TestSandboxConfig_IsAllowed_DevNull(t *testing.T) {
+	root := t.TempDir()
+	s := &SandboxConfig{Root: root}
+
+	if !s.IsAllowed("/dev/null", false) {
+		t.Error("/dev/null should be readable")
+	}
+	if !s.IsAllowed("/dev/null", true) {
+		t.Error("/dev/null should be writable")
+	}
+}
+
 func TestSandboxConfig_IsBlockedCommand(t *testing.T) {
 	s := &SandboxConfig{BlockedCommands: []string{"rm -rf", "format", "dd if="}}
 
@@ -674,7 +686,7 @@ func TestSandboxedCmd_CleanupIdempotent(t *testing.T) {
 func TestSandboxedCmd_WaitCallsCleanup(t *testing.T) {
 	cleanupCalled := false
 	scmd := &SandboxedCmd{
-		Cmd: exec.Command("echo", "ok"),
+		Cmd:     exec.Command("echo", "ok"),
 		cleanup: func() { cleanupCalled = true },
 	}
 

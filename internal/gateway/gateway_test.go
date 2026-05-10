@@ -530,7 +530,7 @@ func TestGatewayInjectsMessageTargetIntoContext(t *testing.T) {
 	if !ok {
 		t.Fatal("expected message target in context")
 	}
-	if got.ChannelID != "ctx-ch" || got.ChatID != "chat-1" || got.ChatType != "p2p" || got.ReplyToMessageID != "msg-1" {
+	if got.ChannelID != "ctx-ch" || got.ChatID != "chat-1" || got.ChatType != "p2p" || got.ReceiveIDType != "chat_id" || got.ReplyToMessageID != "msg-1" {
 		t.Fatalf("unexpected message target: %+v", got)
 	}
 }
@@ -570,7 +570,7 @@ func TestGatewaySendMessageInjectsMessageTargetIntoContext(t *testing.T) {
 	if !ok {
 		t.Fatal("expected message target in context")
 	}
-	if got.ChannelID != "api-ctx-ch" || got.ChatID != "chat-api" || got.ChatType != "group" || got.ReplyToMessageID != "" {
+	if got.ChannelID != "api-ctx-ch" || got.ChatID != "chat-api" || got.ChatType != "group" || got.ReceiveIDType != "chat_id" || got.ReplyToMessageID != "" {
 		t.Fatalf("unexpected message target: %+v", got)
 	}
 }
