@@ -209,7 +209,7 @@ func TestCronToolListMarksMissingDeliveryTarget(t *testing.T) {
 	if !strings.Contains(out, "delivery=missing") {
 		t.Fatalf("expected missing delivery marker, got: %s", out)
 	}
-	if strings.Contains(out, "read_id=") {
-		t.Fatalf("did not expect read_id in list output, got: %s", out)
+	if !strings.Contains(out, "read_id=") {
+		t.Fatalf("expected read_id in list output, got: %s", out)
 	}
 }

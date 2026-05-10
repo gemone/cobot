@@ -185,8 +185,8 @@ func (t *CronTool) handleList() (string, error) {
 		if job.Delivery.ChannelID == "" || job.Delivery.ChatID == "" {
 			delivery = fmt.Sprintf("delivery=missing(use bind %s or bind with no args if it is the only unbound job)", job.ID)
 		}
-		fmt.Fprintf(&b, "  %s | %s | %s | status=%s | runs=%d | last=%s | next=%s | %s\n",
-			job.ID, job.Name, job.Schedule, job.Status, job.RunCount, lastRun, nextRun, delivery)
+		fmt.Fprintf(&b, "  %s | %s | %s | status=%s | runs=%d | last=%s | next=%s | read_id=%s | %s\n",
+			job.ID, job.Name, job.Schedule, job.Status, job.RunCount, lastRun, nextRun, job.ReadID(), delivery)
 	}
 	return b.String(), nil
 }
