@@ -262,16 +262,27 @@ func (s *Scheduler) RemoveJob(readID string) error {
 	return nil
 }
 
-func (s *Scheduler) RemoveJobByID(jobID string) error {
-	if err := validateJobID(jobID); err != nil {
-		return err
+// PreDelete marks a job as pending deletion, stops its scheduling, and
+// freezes its ReadToken so the caller can safely confirm deletion later.
+// Returns the frozen read_id that must be used for the subsequent delete.
+func (s *Scheduler) PreDelete(readID string) (string, error) {
+	jobID, token, err := parseSchedulerReadID(readID)
+	if err != nil {
+		return "", err
 	}
+
+	job, err := s.store.Read(jobID, token)
+	if err != nil {
+		return "", err
+	}
+
 	s.unscheduleJob(jobID)
-	if err := s.store.Delete(jobID, ""); err != nil {
-		return err
+
+	job.Status = StatusPendingDelete
+	if err := s.store.Update(job); err != nil {
+		return "", err
 	}
-	s.CleanupJobDB(jobID)
-	return nil
+	return job.ReadID(), nil
 }
 
 // PauseJob removes a job from cron but keeps it in the store as paused.

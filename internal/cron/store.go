@@ -16,9 +16,10 @@ import (
 )
 
 const (
-	StatusActive    = "active"
-	StatusPaused    = "paused"
-	StatusCompleted = "completed"
+	StatusActive        = "active"
+	StatusPaused        = "paused"
+	StatusCompleted     = "completed"
+	StatusPendingDelete = "pending_delete"
 )
 
 const jobExt = ".yaml"

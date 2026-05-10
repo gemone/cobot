@@ -3,7 +3,7 @@
   "properties": {
     "action": {
       "type": "string",
-      "enum": ["create", "list", "delete", "pause", "resume", "bind", "list_runs"],
+      "enum": ["create", "list", "pre_delete", "delete", "pause", "resume", "bind", "list_runs"],
       "description": "Action to perform"
     },
     "schedule": {
@@ -20,7 +20,7 @@
     },
     "read_id": {
       "type": "string",
-      "description": "Opaque token from a prior list/get operation, required for delete/pause/resume actions. Also accepted by bind for backward compatibility, but prefer job_id."
+      "description": "Opaque token from a prior list/get operation, required for pre_delete/delete/pause/resume actions. Also accepted by bind for backward compatibility, but prefer job_id. For delete, use the read_id returned by pre_delete (it is frozen and won't expire)."
     },
     "name": {
       "type": "string",

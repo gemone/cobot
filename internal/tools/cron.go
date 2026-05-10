@@ -21,13 +21,14 @@ var cronParamsJSON []byte
 var _ cobot.Tool = (*CronTool)(nil)
 
 const (
-	actionCreate   = "create"
-	actionList     = "list"
-	actionDelete   = "delete"
-	actionPause    = "pause"
-	actionResume   = "resume"
-	actionBind     = "bind"
-	actionListRuns = "list_runs"
+	actionCreate    = "create"
+	actionList      = "list"
+	actionPreDelete = "pre_delete"
+	actionDelete    = "delete"
+	actionPause     = "pause"
+	actionResume    = "resume"
+	actionBind      = "bind"
+	actionListRuns  = "list_runs"
 )
 
 const displayTimeFmt = "2006-01-02 15:04:05"
@@ -52,7 +53,7 @@ func NewCronTool(scheduler *cron.Scheduler, opts ...CronToolOption) *CronTool {
 func (t *CronTool) Name() string { return "cron" }
 
 func (t *CronTool) Description() string {
-	return `Schedule and manage recurring and one-shot tasks. Actions: create (schedule a new job), list (show all jobs), delete (remove a job), pause (temporarily stop a job), resume (restart a paused job), bind (attach an existing job to the current conversation for result delivery; accepts job_id or auto-binds when there is only one missing target), list_runs (show execution history for a job). Use cron expressions like "0 9 * * *" for recurring tasks or ISO timestamps for one-shot tasks. Results are stored in per-job run databases and can be viewed with list_runs.`
+	return `Schedule and manage recurring and one-shot tasks. Actions: create (schedule a new job), list (show all jobs), pre_delete (mark a job for deletion and stop scheduling; returns a frozen read_id), delete (confirm deletion using the frozen read_id from pre_delete), pause (temporarily stop a job), resume (restart a paused job), bind (attach an existing job to the current conversation for result delivery; accepts job_id or auto-binds when there is only one missing target), list_runs (show execution history for a job). Use cron expressions like "0 9 * * *" for recurring tasks or ISO timestamps for one-shot tasks. Results are stored in per-job run databases and can be viewed with list_runs.`
 }
 
 func (t *CronTool) Parameters() json.RawMessage {
@@ -81,6 +82,8 @@ func (t *CronTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 		return t.handleCreate(ctx, params)
 	case actionList:
 		return t.handleList()
+	case actionPreDelete:
+		return t.handlePreDelete(params)
 	case actionDelete:
 		return t.handleDelete(params)
 	case actionPause:
@@ -92,7 +95,7 @@ func (t *CronTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	case actionListRuns:
 		return t.handleListRuns(params)
 	default:
-		return "", fmt.Errorf("unknown action: %s (valid: %s, %s, %s, %s, %s, %s, %s)", params.Action, actionCreate, actionList, actionDelete, actionPause, actionResume, actionBind, actionListRuns)
+		return "", fmt.Errorf("unknown action: %s (valid: %s, %s, %s, %s, %s, %s, %s, %s)", params.Action, actionCreate, actionList, actionPreDelete, actionDelete, actionPause, actionResume, actionBind, actionListRuns)
 	}
 }
 
@@ -203,13 +206,14 @@ func (t *CronTool) withReadID(readID string, action string, fn func(string) erro
 	return fmt.Sprintf("Job %s %s.", jobID, verb), nil
 }
 
+func (t *CronTool) handlePreDelete(params cronParams) (string, error) {
+	return t.withReadID(params.ReadID, "pre_delete", func(readID string) error {
+		_, err := t.scheduler.PreDelete(readID)
+		return err
+	}, "marked for deletion")
+}
+
 func (t *CronTool) handleDelete(params cronParams) (string, error) {
-	if params.JobID != "" {
-		if err := t.scheduler.RemoveJobByID(params.JobID); err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("Job %s deleted.", params.JobID), nil
-	}
 	return t.withReadID(params.ReadID, "delete", t.scheduler.RemoveJob, "deleted")
 }
 
