@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -63,7 +64,9 @@ type FeishuChannel struct {
 	// dedup runs inside the handler, but auto-react fires *before* the
 	// handler is invoked, so WS redelivery would otherwise trigger
 	// duplicate 👍 reactions on the same user message.
-	seenIDs sync.Map
+	seenIDs         sync.Map
+	lastIDCleanup   time.Time
+	lastIDCleanupMu sync.Mutex
 }
 
 // tokenCache holds a cached tenant_access_token with its expiry time.
@@ -127,6 +130,33 @@ func (ch *FeishuChannel) Close() {
 	}
 }
 
+const idCleanupInterval = 24 * time.Hour
+const idCleanupTTL = 7 * 24 * time.Hour
+
+func (ch *FeishuChannel) cleanupOldIDs() {
+	ch.lastIDCleanupMu.Lock()
+	if time.Since(ch.lastIDCleanup) < idCleanupInterval {
+		ch.lastIDCleanupMu.Unlock()
+		return
+	}
+	ch.lastIDCleanup = time.Now()
+	ch.lastIDCleanupMu.Unlock()
+
+	cutoff := time.Now().Add(-idCleanupTTL)
+	ch.sentIDs.Range(func(key, value any) bool {
+		if t, ok := value.(time.Time); ok && t.Before(cutoff) {
+			ch.sentIDs.Delete(key)
+		}
+		return true
+	})
+	ch.seenIDs.Range(func(key, value any) bool {
+		if t, ok := value.(time.Time); ok && t.Before(cutoff) {
+			ch.seenIDs.Delete(key)
+		}
+		return true
+	})
+}
+
 // handleReceive is the Lark SDK callback for incoming messages.
 func (ch *FeishuChannel) handleReceive(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
 	if event == nil || event.Event == nil || event.Event.Message == nil {
@@ -157,6 +187,8 @@ func (ch *FeishuChannel) handleReceive(ctx context.Context, event *larkim.P2Mess
 
 	chatID := ptrStr(msgData.ChatId)
 	messageID := ptrStr(msgData.MessageId)
+
+	ch.cleanupOldIDs()
 
 	if messageID != "" {
 		if _, ours := ch.sentIDs.Load(messageID); ours {
@@ -300,7 +332,7 @@ func (ch *FeishuChannel) Send(ctx context.Context, msg *cobot.OutboundMessage) (
 		content, msgType = buildPostPayload(msg.Text)
 	}
 
-	slog.Info("feishu: Send dispatch", "channel", ch.ID(), "chat_id", msg.ReceiveID, "msg_type", msgType, "reply_to", msg.ReplyToMessageID, "text_len", len(msg.Text))
+	slog.Debug("feishu: Send dispatch", "channel", ch.ID(), "chat_id", msg.ReceiveID, "msg_type", msgType, "reply_to", msg.ReplyToMessageID, "text_len", len(msg.Text))
 	if msgType == cobot.OutboundMsgTypePost || msgType == cobot.OutboundMsgTypeInteractive {
 		return ch.sendRichMessage(ctx, msg.ReceiveID, receiveIDType, msgType, content, msg.ReplyToMessageID)
 	}
@@ -381,15 +413,15 @@ func (ch *FeishuChannel) sendRichMessage(ctx context.Context, receiveID, receive
 		return nil, fmt.Errorf("feishu rich message: get token: %w", err)
 	}
 
-	url := fmt.Sprintf("https://open.%s.cn/open-apis/im/v1/messages?receive_id_type=%s", ch.config.Domain, receiveIDType)
+	apiURL := fmt.Sprintf("https://open.%s.cn/open-apis/im/v1/messages?receive_id_type=%s", ch.config.Domain, receiveIDType)
 	logKey := "feishu: sendRichMessage"
 	if replyTo != "" {
-		url = fmt.Sprintf("https://open.%s.cn/open-apis/im/v1/messages/%s/reply", ch.config.Domain, replyTo)
+		apiURL = fmt.Sprintf("https://open.%s.cn/open-apis/im/v1/messages/%s/reply", ch.config.Domain, url.PathEscape(replyTo))
 		logKey = "feishu: sendReplyTo"
 	}
-	slog.Info(logKey, "url", url, "reply_to", replyTo, "msg_type", msgType, "payload", string(payload))
+	slog.Debug(logKey, "url", apiURL, "reply_to", replyTo, "msg_type", msgType, "payload_len", len(payload))
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("feishu rich message request: %w", err)
 	}
@@ -403,7 +435,7 @@ func (ch *FeishuChannel) sendRichMessage(ctx context.Context, receiveID, receive
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
-	slog.Info("feishu: rich message API response", "status", resp.StatusCode, "reply_to", replyTo, "body", string(respBody))
+	slog.Debug("feishu: rich message API response", "status", resp.StatusCode, "reply_to", replyTo, "body_len", len(respBody))
 	if resp.StatusCode >= 300 {
 		return &cobot.SendResult{Success: false}, fmt.Errorf("feishu rich message returned %d: %s", resp.StatusCode, respBody)
 	}

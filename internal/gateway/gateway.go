@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/url"
 	"sync"
 	"time"
 
@@ -262,8 +261,6 @@ func (g *Gateway) shouldHandleMessage(channelID string, msg *cobot.InboundMessag
 		return true
 	}
 
-	g.dedupMu.Lock()
-	defer g.dedupMu.Unlock()
 	return g.recordDedup(channelID + ":" + msg.MessageID)
 }
 
@@ -369,11 +366,11 @@ type Deduper interface {
 	Record(key string) bool
 }
 
-// recordDedup reports whether the given key has been seen before.
-// It is called with dedupMu held by the caller.
 func (g *Gateway) recordDedup(key string) bool {
+	g.dedupMu.Lock()
+	defer g.dedupMu.Unlock()
+
 	now := time.Now()
-	// Prune entries older than 30 minutes on first call each minute.
 	if now.Sub(g.dedupLastPrune) > time.Minute {
 		g.dedupLastPrune = now
 		for k, t := range g.dedup {
@@ -474,7 +471,7 @@ func (g *Gateway) registerReverseChannel(w http.ResponseWriter, r *http.Request)
 	}
 	// Only include webhook URL if the channel actually serves one.
 	if _, ok := ch.(webhookProvider); ok {
-		resp["webhook"] = "/webhook/" + url.PathEscape(ch.ID()) + "/"
+		resp["webhook"] = "/webhook/" + ch.ID() + "/"
 	}
 
 	w.Header().Set("Content-Type", "application/json")
