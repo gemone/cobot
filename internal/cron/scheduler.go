@@ -262,6 +262,18 @@ func (s *Scheduler) RemoveJob(readID string) error {
 	return nil
 }
 
+func (s *Scheduler) RemoveJobByID(jobID string) error {
+	if err := validateJobID(jobID); err != nil {
+		return err
+	}
+	s.unscheduleJob(jobID)
+	if err := s.store.Delete(jobID, ""); err != nil {
+		return err
+	}
+	s.CleanupJobDB(jobID)
+	return nil
+}
+
 // PauseJob removes a job from cron but keeps it in the store as paused.
 // readID is required to verify the caller has seen the current state.
 func (s *Scheduler) PauseJob(readID string) error {

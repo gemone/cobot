@@ -204,6 +204,12 @@ func (t *CronTool) withReadID(readID string, action string, fn func(string) erro
 }
 
 func (t *CronTool) handleDelete(params cronParams) (string, error) {
+	if params.JobID != "" {
+		if err := t.scheduler.RemoveJobByID(params.JobID); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Job %s deleted.", params.JobID), nil
+	}
 	return t.withReadID(params.ReadID, "delete", t.scheduler.RemoveJob, "deleted")
 }
 
