@@ -78,10 +78,6 @@ func InitAgent(cfg *cobot.Config, requireProvider bool) (*Result, error) {
 	channelMgr := channel.NewManager()
 	a.SetChannelManager(channelMgr)
 
-	// Start channel health check (30 second interval).
-	hcCtx, hcCancel := context.WithCancel(context.Background())
-	channelMgr.StartHealthCheck(hcCtx, 30*time.Second)
-
 	sm := a.SessionMgr()
 
 	if agentCfg != nil {
@@ -112,8 +108,6 @@ func InitAgent(cfg *cobot.Config, requireProvider bool) (*Result, error) {
 	// SetModel resolves the "provider:model" spec and initializes the provider.
 	if err := a.SetModel(cfg.Model); err != nil {
 		if requireProvider {
-			hcCancel()
-			channelMgr.StopHealthCheck()
 			a.Close()
 			return nil, err
 		}
@@ -121,18 +115,12 @@ func InitAgent(cfg *cobot.Config, requireProvider bool) (*Result, error) {
 	}
 
 	if err := ConfigureAgentForWorkspace(a, ws, registry); err != nil {
-		hcCancel()
-		channelMgr.StopHealthCheck()
 		a.Close()
 		return nil, err
 	}
 
 	// a.Close() already closes the memory store; no need for separate cleanup.
-	cleanup := func() {
-		hcCancel()
-		channelMgr.StopHealthCheck()
-		a.Close()
-	}
+	cleanup := func() { a.Close() }
 	return &Result{Agent: a, Workspace: ws, ChannelMgr: channelMgr, Cleanup: cleanup}, nil
 }
 
@@ -381,7 +369,7 @@ func configureCronTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.M
 		BrokerDBPath: ws.BrokerDBPath(),
 		CronDir:      ws.CronDir(),
 		RunsDir:      ws.CronRunsDir(),
-		Notifier:     channelMgr,
+		Deliverer:    channelMgr,
 		NewAgent: func() *agent.Agent {
 			filtered := a.ToolRegistry().Clone().Without("cron", "delegate_task")
 			sub := newSubAgent(a, registry, filtered)
@@ -396,15 +384,7 @@ func configureCronTool(a *agent.Agent, ws *workspace.Workspace, registry cobot.M
 
 	a.SetBroker(brokerDB)
 	a.SetCronScheduler(scheduler)
-	a.RegisterTool(tools.NewCronTool(scheduler,
-		tools.WithCronChannelIDFn(func() string {
-			ids := channelMgr.AllAliveIDs()
-			if len(ids) > 0 {
-				return ids[0]
-			}
-			return ""
-		}),
-	))
+	a.RegisterTool(tools.NewCronTool(scheduler))
 }
 
 func configureSkillSyncer(a *agent.Agent, store *memory.Store, ws *workspace.Workspace, agentCfg *config.AgentConfig) {
@@ -487,8 +467,13 @@ func ConfigureGateway(res *Result, gwCfg cobot.GatewayConfig, channels []cobot.C
 	gw := gateway.New(gateway.Config{Addr: gwCfg.Addr, APIKey: gwCfg.APIKey}, res.ChannelMgr, handler)
 
 	// Wire slash commands: create registry, inject Agent and cron, set help Data.
-	cmdReg := command.New(res.Agent, nil)
+	var cronScheduler *cron.Scheduler
+	if s, ok := res.Agent.CronScheduler().(*cron.Scheduler); ok {
+		cronScheduler = s
+	}
+	cmdReg := command.New(res.Agent, cronScheduler)
 	cmdReg.SetHelpData()
+	res.SetCommandRegistry(cmdReg)
 	gw.SetCommandRegistry(cmdReg)
 
 	// Register reverse channel factory for dynamic registration via REST API.
@@ -530,7 +515,7 @@ func sanitizeChannelID(cfgName, prefix string) (string, error) {
 		return "", fmt.Errorf("channel name %q produces an empty ID after sanitization", cfgName)
 	}
 	// Verify it now matches the full format.
-	if !channelIDRegex.MatchString(prefix+sanitized) {
+	if !channelIDRegex.MatchString(prefix + sanitized) {
 		return "", fmt.Errorf("channel name %q cannot be used as a channel ID (got %q)", cfgName, prefix+sanitized)
 	}
 	return prefix + sanitized, nil
@@ -541,9 +526,11 @@ func createChannel(cfg cobot.ChannelConfig) (cobot.MessageChannel, error) {
 	switch cfg.Type {
 	case "feishu":
 		fc := channel.FeishuConfig{
-			AppID:     cfg.Config["app_id"],
-			AppSecret: cfg.Config["app_secret"],
-			Domain:    cfg.Config["domain"],
+			AppID:        cfg.Config["app_id"],
+			AppSecret:    cfg.Config["app_secret"],
+			Domain:       cfg.Config["domain"],
+			ReceiveEmoji: cfg.Config["receive_emoji"],
+			DoneEmoji:    cfg.Config["done_emoji"],
 		}
 		if fc.AppID == "" || fc.AppSecret == "" {
 			return nil, fmt.Errorf("feishu channel %q: app_id and app_secret are required", cfg.Name)

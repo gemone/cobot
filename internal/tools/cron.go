@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cobot-agent/cobot/internal/requestctx"
 	"github.com/cobot-agent/cobot/internal/textutil"
 
 	"github.com/cobot-agent/cobot/internal/cron"
@@ -20,30 +21,25 @@ var cronParamsJSON []byte
 var _ cobot.Tool = (*CronTool)(nil)
 
 const (
-	actionCreate   = "create"
-	actionList     = "list"
-	actionDelete   = "delete"
-	actionPause    = "pause"
-	actionResume   = "resume"
-	actionListRuns = "list_runs"
+	actionCreate    = "create"
+	actionList      = "list"
+	actionPreDelete = "pre_delete"
+	actionDelete    = "delete"
+	actionPause     = "pause"
+	actionResume    = "resume"
+	actionBind      = "bind"
+	actionListRuns  = "list_runs"
 )
 
 const displayTimeFmt = "2006-01-02 15:04:05"
 
 // CronTool allows the agent to schedule and manage recurring and one-shot tasks.
 type CronTool struct {
-	scheduler   *cron.Scheduler
-	channelIDFn func() string // returns the channel ID of the current context
+	scheduler *cron.Scheduler
 }
 
 // CronToolOption is a functional option for CronTool.
 type CronToolOption func(*CronTool)
-
-// WithCronChannelIDFn sets a function that returns the current channel ID.
-// Cron job results are sent back to the originating channel.
-func WithCronChannelIDFn(fn func() string) CronToolOption {
-	return func(t *CronTool) { t.channelIDFn = fn }
-}
 
 // NewCronTool creates a new CronTool with the given scheduler.
 func NewCronTool(scheduler *cron.Scheduler, opts ...CronToolOption) *CronTool {
@@ -56,17 +52,8 @@ func NewCronTool(scheduler *cron.Scheduler, opts ...CronToolOption) *CronTool {
 
 func (t *CronTool) Name() string { return "cron" }
 
-// currentChannelID returns the channel ID from the injected function, or empty string.
-// The default wiring (bootstrap.go) selects the first alive channel.
-func (t *CronTool) currentChannelID() string {
-	if t.channelIDFn != nil {
-		return t.channelIDFn()
-	}
-	return ""
-}
-
 func (t *CronTool) Description() string {
-	return `Schedule and manage recurring and one-shot tasks. Actions: create (schedule a new job), list (show all jobs), delete (remove a job), pause (temporarily stop a job), resume (restart a paused job), list_runs (show execution history for a job). Use cron expressions like "0 9 * * *" for recurring tasks or ISO timestamps for one-shot tasks. Results are stored in per-job run databases and can be viewed with list_runs.`
+	return `Schedule and manage recurring and one-shot tasks. Actions: create (schedule a new job), list (show all jobs), pre_delete (mark a job for deletion and stop scheduling; returns a frozen read_id), delete (confirm deletion using the frozen read_id from pre_delete), pause (temporarily stop a job), resume (restart a paused job), bind (attach an existing job to the current conversation for result delivery; accepts job_id or auto-binds when there is only one missing target), list_runs (show execution history for a job). Use cron expressions like "0 9 * * *" for recurring tasks or ISO timestamps for one-shot tasks. Results are stored in per-job run databases and can be viewed with list_runs.`
 }
 
 func (t *CronTool) Parameters() json.RawMessage {
@@ -95,16 +82,20 @@ func (t *CronTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 		return t.handleCreate(ctx, params)
 	case actionList:
 		return t.handleList()
+	case actionPreDelete:
+		return t.handlePreDelete(params)
 	case actionDelete:
 		return t.handleDelete(params)
 	case actionPause:
 		return t.handlePause(params)
 	case actionResume:
 		return t.handleResume(params)
+	case actionBind:
+		return t.handleBind(ctx, params)
 	case actionListRuns:
 		return t.handleListRuns(params)
 	default:
-		return "", fmt.Errorf("unknown action: %s (valid: %s, %s, %s, %s, %s, %s)", params.Action, actionCreate, actionList, actionDelete, actionPause, actionResume, actionListRuns)
+		return "", fmt.Errorf("unknown action: %s (valid: %s, %s, %s, %s, %s, %s, %s, %s)", params.Action, actionCreate, actionList, actionPreDelete, actionDelete, actionPause, actionResume, actionBind, actionListRuns)
 	}
 }
 
@@ -132,8 +123,8 @@ func (t *CronTool) handleCreate(ctx context.Context, params cronParams) (string,
 		Status:    cron.StatusActive,
 		OneShot:   oneShot,
 		CreatedAt: time.Now(),
-		ChannelID: t.currentChannelID(),
 	}
+	applyMessageTarget(job, ctx)
 
 	if err := t.scheduler.AddJob(job); err != nil {
 		return "", err
@@ -152,6 +143,20 @@ func (t *CronTool) handleCreate(ctx context.Context, params cronParams) (string,
 	}
 	return fmt.Sprintf("Job created:\n  ID: %s\n  read_id: %s\n  Name: %s\n  Schedule: %s\n  Type: %s\n  Next run: %s\n",
 		job.ID, job.ReadID(), job.Name, job.Schedule, typ, nextStr), nil
+}
+
+func applyMessageTarget(job *cron.Job, ctx context.Context) {
+	target, ok := requestctx.MessageTargetFromContext(ctx)
+	if !ok {
+		return
+	}
+	job.Delivery = cron.DeliveryTarget{
+		ChannelID:        target.ChannelID,
+		ChatID:           target.ChatID,
+		ChatType:         target.ChatType,
+		ReceiveIDType:    target.ReceiveIDType,
+		ReplyToMessageID: target.ReplyToMessageID,
+	}
 }
 
 func (t *CronTool) handleList() (string, error) {
@@ -176,8 +181,12 @@ func (t *CronTool) handleList() (string, error) {
 		if job.NextRun != nil {
 			nextRun = job.NextRun.Format(time.RFC3339)
 		}
-		fmt.Fprintf(&b, "  %s | %s | %s | status=%s | runs=%d | last=%s | next=%s | read_id=%s\n",
-			job.ID, job.Name, job.Schedule, job.Status, job.RunCount, lastRun, nextRun, job.ReadID())
+		delivery := "delivery=ok"
+		if job.Delivery.ChannelID == "" || job.Delivery.ChatID == "" {
+			delivery = fmt.Sprintf("delivery=missing(use bind %s or bind with no args if it is the only unbound job)", job.ID)
+		}
+		fmt.Fprintf(&b, "  %s | %s | %s | status=%s | runs=%d | last=%s | next=%s | read_id=%s | %s\n",
+			job.ID, job.Name, job.Schedule, job.Status, job.RunCount, lastRun, nextRun, job.ReadID(), delivery)
 	}
 	return b.String(), nil
 }
@@ -197,6 +206,13 @@ func (t *CronTool) withReadID(readID string, action string, fn func(string) erro
 	return fmt.Sprintf("Job %s %s.", jobID, verb), nil
 }
 
+func (t *CronTool) handlePreDelete(params cronParams) (string, error) {
+	return t.withReadID(params.ReadID, "pre_delete", func(readID string) error {
+		_, err := t.scheduler.PreDelete(readID)
+		return err
+	}, "marked for deletion")
+}
+
 func (t *CronTool) handleDelete(params cronParams) (string, error) {
 	return t.withReadID(params.ReadID, "delete", t.scheduler.RemoveJob, "deleted")
 }
@@ -207,6 +223,31 @@ func (t *CronTool) handlePause(params cronParams) (string, error) {
 
 func (t *CronTool) handleResume(params cronParams) (string, error) {
 	return t.withReadID(params.ReadID, "resume", t.scheduler.ResumeJob, "resumed")
+}
+
+func (t *CronTool) handleBind(ctx context.Context, params cronParams) (string, error) {
+	target, ok := requestctx.MessageTargetFromContext(ctx)
+	if !ok || target.ChannelID == "" || target.ChatID == "" {
+		return "", fmt.Errorf("bind action requires a current conversation target")
+	}
+	selector := strings.TrimSpace(params.JobID)
+	if selector == "" {
+		selector = strings.TrimSpace(params.ReadID)
+	}
+	jobID, err := t.scheduler.ResolveBindJobID(selector)
+	if err != nil {
+		return "", err
+	}
+	if err := t.scheduler.BindJobTargetByID(jobID, cron.DeliveryTarget{
+		ChannelID:        target.ChannelID,
+		ChatID:           target.ChatID,
+		ChatType:         target.ChatType,
+		ReceiveIDType:    target.ReceiveIDType,
+		ReplyToMessageID: target.ReplyToMessageID,
+	}); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Job %s bound to current conversation.", jobID), nil
 }
 
 func (t *CronTool) handleListRuns(params cronParams) (string, error) {

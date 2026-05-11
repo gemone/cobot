@@ -488,6 +488,109 @@ func TestScheduler_syncJobs(t *testing.T) {
 	}
 }
 
+func TestScheduler_StartRefreshesPersistedNextRun(t *testing.T) {
+	t.Parallel()
+
+	br, cleanup := tempTestBroker(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	storeDir := t.TempDir()
+	s := newTestSchedulerWithStore(t, storeDir, br)
+
+	staleNextRun := time.Now().Add(-2 * time.Hour).Round(time.Second)
+	job := &Job{
+		ID:       NewJobID(),
+		Name:     "restart-refresh",
+		Schedule: "*/5 * * * *",
+		Prompt:   "check next run",
+		Status:   StatusActive,
+		NextRun:  &staleNextRun,
+	}
+	if err := s.store.Create(job); err != nil {
+		t.Fatalf("store Create: %v", err)
+	}
+
+	if err := s.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.Stop()
+
+	jobs, err := s.ListJobs()
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(jobs))
+	}
+	if jobs[0].NextRun == nil {
+		t.Fatal("expected NextRun to be set")
+	}
+	if !jobs[0].NextRun.After(time.Now()) {
+		t.Fatalf("expected refreshed NextRun in future, got %v", jobs[0].NextRun)
+	}
+	if !jobs[0].NextRun.After(staleNextRun) {
+		t.Fatalf("expected refreshed NextRun after stale value %v, got %v", staleNextRun, jobs[0].NextRun)
+	}
+
+	storeJobs, err := s.store.ListReadOnly()
+	if err != nil {
+		t.Fatalf("store ListReadOnly: %v", err)
+	}
+	if len(storeJobs) != 1 {
+		t.Fatalf("expected 1 stored job, got %d", len(storeJobs))
+	}
+	if storeJobs[0].NextRun == nil {
+		t.Fatal("expected stored NextRun to be set")
+	}
+	if !storeJobs[0].NextRun.After(staleNextRun) {
+		t.Fatalf("expected stored NextRun after stale value %v, got %v", staleNextRun, storeJobs[0].NextRun)
+	}
+}
+
+func TestScheduler_syncJobsRefreshesPersistedNextRun(t *testing.T) {
+	t.Parallel()
+
+	br, cleanup := tempTestBroker(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	s := newTestScheduler(t, br)
+	if err := s.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.Stop()
+
+	staleNextRun := time.Now().Add(-90 * time.Minute).Round(time.Second)
+	job := &Job{
+		ID:       NewJobID(),
+		Name:     "sync-refresh",
+		Schedule: "*/10 * * * *",
+		Prompt:   "sync next run",
+		Status:   StatusActive,
+		NextRun:  &staleNextRun,
+	}
+	if err := s.store.Create(job); err != nil {
+		t.Fatalf("store Create: %v", err)
+	}
+
+	s.syncJobs()
+
+	storeJobs, err := s.store.ListReadOnly()
+	if err != nil {
+		t.Fatalf("store ListReadOnly: %v", err)
+	}
+	if len(storeJobs) != 1 {
+		t.Fatalf("expected 1 stored job, got %d", len(storeJobs))
+	}
+	if storeJobs[0].NextRun == nil {
+		t.Fatal("expected stored NextRun to be set")
+	}
+	if !storeJobs[0].NextRun.After(staleNextRun) {
+		t.Fatalf("expected stored NextRun after stale value %v, got %v", staleNextRun, storeJobs[0].NextRun)
+	}
+}
+
 // TestScheduler_StopWaitsForGoroutines verifies that Stop() blocks until all
 // background goroutines (renewLeaseLoop, consumeLoop, cleanupLoop) have exited.
 func TestScheduler_StopWaitsForGoroutines(t *testing.T) {

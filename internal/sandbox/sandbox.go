@@ -172,6 +172,9 @@ func (s *SandboxConfig) IsAllowed(path string, write bool) bool {
 	if s.IsEmpty() {
 		return true
 	}
+	if path == "/dev/null" {
+		return true
+	}
 
 	absPath, err := normalizePath(path)
 	if err != nil {
@@ -441,6 +444,7 @@ func (s *SandboxedCmd) Wait() error {
 	s.Cleanup()
 	return err
 }
+
 // ---------------------------------------------------------------------------
 
 // Sandbox provides unified virtual path translation and OS-level command isolation.

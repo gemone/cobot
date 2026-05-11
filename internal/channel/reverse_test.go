@@ -20,7 +20,7 @@ func TestReverseChannelPlatform(t *testing.T) {
 	}
 }
 
-func TestReverseChannelSendMessage(t *testing.T) {
+func TestReverseChannelSend(t *testing.T) {
 	var receivedBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		buf := make([]byte, r.ContentLength)
@@ -37,7 +37,7 @@ func TestReverseChannelSendMessage(t *testing.T) {
 		ReceiveID: "chat1",
 		Text:      "hello from reverse",
 	}
-	result, err := ch.SendMessage(context.Background(), msg)
+	result, err := ch.Send(context.Background(), msg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestReverseChannelSendSecret(t *testing.T) {
 	ch := NewReverseChannel("rev-3", server.URL, "s3cret")
 	defer ch.Close()
 
-	_, err := ch.SendMessage(context.Background(), &cobot.OutboundMessage{Text: "test"})
+	_, err := ch.Send(context.Background(), &cobot.OutboundMessage{Text: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestReverseChannelSendError(t *testing.T) {
 	ch := NewReverseChannel("rev-4", server.URL, "")
 	defer ch.Close()
 
-	_, err := ch.SendMessage(context.Background(), &cobot.OutboundMessage{Text: "test"})
+	_, err := ch.Send(context.Background(), &cobot.OutboundMessage{Text: "test"})
 	if err == nil {
 		t.Fatal("expected error for 500 response")
 	}
@@ -103,16 +103,7 @@ func TestReverseChannelAliveAndClose(t *testing.T) {
 	ch.Close()
 }
 
-func TestReverseChannelEditNotSupported(t *testing.T) {
-	ch := NewReverseChannel("rev-6", "http://localhost/cb", "")
-	defer ch.Close()
-	_, err := ch.EditMessage(context.Background(), "chat1", "msg1", "text")
-	if err != cobot.ErrNotSupported {
-		t.Fatalf("expected ErrNotSupported, got %v", err)
-	}
-}
-
-func TestReverseChannelSendNotification(t *testing.T) {
+func TestReverseChannelSendNotificationAsMessage(t *testing.T) {
 	var receivedBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		buf := make([]byte, r.ContentLength)
@@ -125,10 +116,7 @@ func TestReverseChannelSendNotification(t *testing.T) {
 	ch := NewReverseChannel("rev-7", server.URL, "")
 	defer ch.Close()
 
-	err := ch.Send(context.Background(), cobot.ChannelMessage{
-		Type:    "cron_result",
-		Content: "task completed",
-	})
+	_, err := ch.Send(context.Background(), &cobot.OutboundMessage{Text: "task completed"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -16,9 +16,10 @@ import (
 )
 
 const (
-	StatusActive    = "active"
-	StatusPaused    = "paused"
-	StatusCompleted = "completed"
+	StatusActive        = "active"
+	StatusPaused        = "paused"
+	StatusCompleted     = "completed"
+	StatusPendingDelete = "pending_delete"
 )
 
 const jobExt = ".yaml"
@@ -57,8 +58,9 @@ type Job struct {
 	// the caller has seen the latest state before performing destructive ops.
 	ReadToken string `yaml:"read_token"`
 
-	// Notification target
-	ChannelID string `yaml:"channel_id,omitempty"`
+	// Delivery is the target for cron result notifications.
+	// Embedded so YAML keys stay flat (channel_id, chat_id, etc.).
+	Delivery DeliveryTarget `yaml:",inline"`
 }
 
 // ReadID returns a temporary opaque token combining the job ID with the

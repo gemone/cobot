@@ -18,12 +18,12 @@ import (
 // integrations via the Gateway REST API.
 type ReverseChannel struct {
 	*cobot.BaseChannel
-	platform     string
-	callbackURL  string
-	secret       string
-	httpClient   *http.Client
-	handler      func(ctx context.Context, msg *cobot.InboundMessage)
-	handlerMu    sync.RWMutex
+	platform    string
+	callbackURL string
+	secret      string
+	httpClient  *http.Client
+	handler     func(ctx context.Context, msg *cobot.InboundMessage)
+	handlerMu   sync.RWMutex
 }
 
 // NewReverseChannel creates a ReverseChannel that POSTs messages to callbackURL.
@@ -54,8 +54,8 @@ func (ch *ReverseChannel) OnMessage(handler func(ctx context.Context, msg *cobot
 // ReverseChannel does not emit events, so this is a no-op.
 func (ch *ReverseChannel) OnEvent(handler func(ctx context.Context, event *cobot.ChannelEvent)) {}
 
-// SendMessage POSTs the outbound message to the callback URL.
-func (ch *ReverseChannel) SendMessage(ctx context.Context, msg *cobot.OutboundMessage) (*cobot.SendResult, error) {
+// Send POSTs the outbound message to the callback URL.
+func (ch *ReverseChannel) Send(ctx context.Context, msg *cobot.OutboundMessage) (*cobot.SendResult, error) {
 	if !ch.IsAlive() {
 		return nil, fmt.Errorf("reverse channel %s is closed", ch.ID())
 	}
@@ -88,11 +88,6 @@ func (ch *ReverseChannel) SendMessage(ctx context.Context, msg *cobot.OutboundMe
 	return &cobot.SendResult{Success: true}, nil
 }
 
-// EditMessage is not supported for reverse channels.
-func (ch *ReverseChannel) EditMessage(ctx context.Context, chatID, messageID, content string) (*cobot.SendResult, error) {
-	return nil, cobot.ErrNotSupported
-}
-
 // ReactMessage is not supported for reverse channels.
 func (ch *ReverseChannel) ReactMessage(ctx context.Context, messageID, reactionType string) error {
 	return cobot.ErrNotSupported
@@ -101,15 +96,6 @@ func (ch *ReverseChannel) ReactMessage(ctx context.Context, messageID, reactionT
 // Start is a no-op for ReverseChannel since it has no persistent connection.
 func (ch *ReverseChannel) Start(ctx context.Context) error {
 	return nil
-}
-
-// Send delivers a notification (Channel interface) via the callback URL.
-func (ch *ReverseChannel) Send(ctx context.Context, msg cobot.ChannelMessage) error {
-	out := &cobot.OutboundMessage{
-		Text: msg.Content,
-	}
-	_, err := ch.SendMessage(ctx, out)
-	return err
 }
 
 // Close shuts down the ReverseChannel.

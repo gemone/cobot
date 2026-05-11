@@ -51,7 +51,7 @@ func NewSQLiteBroker(dbPath string) (*SQLiteBroker, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		return nil, fmt.Errorf("create broker dir: %w", err)
 	}
-	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=30000")
 	if err != nil {
 		return nil, fmt.Errorf("open broker db: %w", err)
 	}

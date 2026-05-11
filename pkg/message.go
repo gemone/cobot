@@ -46,13 +46,13 @@ type Attachment struct {
 type OutboundMessageType string
 
 const (
-	OutboundMsgTypeText         OutboundMessageType = "text"
+	OutboundMsgTypeText        OutboundMessageType = "text"
 	OutboundMsgTypePost        OutboundMessageType = "post"
 	OutboundMsgTypeImage       OutboundMessageType = "image"
 	OutboundMsgTypeAudio       OutboundMessageType = "audio"
 	OutboundMsgTypeVideo       OutboundMessageType = "video"
 	OutboundMsgTypeFile        OutboundMessageType = "file"
-	OutboundMsgTypeMedia       OutboundMessageType = "media" // sticker, etc.
+	OutboundMsgTypeMedia       OutboundMessageType = "media"       // sticker, etc.
 	OutboundMsgTypeInteractive OutboundMessageType = "interactive" // card/button
 )
 
@@ -67,17 +67,18 @@ const (
 //   - media:    MediaKey field (Feishu media key)
 //   - interactive: RichContent field (card JSON)
 type OutboundMessage struct {
-	ReceiveID         string              `json:"receive_id,omitempty"`
-	ReceiveType       string              `json:"receive_type,omitempty"`
-	MsgType           OutboundMessageType `json:"msg_type,omitempty"` // defaults to "text" if empty
-	Text              string              `json:"text,omitempty"`
-	RichContent       string              `json:"rich_content,omitempty"` // Feishu post/card JSON
-	ImageKey          string              `json:"image_key,omitempty"`   // Feishu image resource key
-	MediaKey          string              `json:"media_key,omitempty"`   // audio/video/file resource key
-	Attachments       []Attachment         `json:"attachments,omitempty"`
-	ReplyTo           string              `json:"reply_to,omitempty"`
-	ReplyToMessageID  string              `json:"reply_to_message_id,omitempty"` // Feishu reply-to message ID
-	UUID              string              `json:"uuid,omitempty"`
+	ReceiveID        string              `json:"receive_id,omitempty"`
+	ReceiveType      string              `json:"receive_type,omitempty"`
+	ReceiveIDType    string              `json:"receive_id_type,omitempty"`
+	MsgType          OutboundMessageType `json:"msg_type,omitempty"` // defaults to "text" if empty
+	Text             string              `json:"text,omitempty"`
+	RichContent      string              `json:"rich_content,omitempty"` // Feishu post/card JSON
+	ImageKey         string              `json:"image_key,omitempty"`    // Feishu image resource key
+	MediaKey         string              `json:"media_key,omitempty"`    // audio/video/file resource key
+	Attachments      []Attachment        `json:"attachments,omitempty"`
+	ReplyTo          string              `json:"reply_to,omitempty"`
+	ReplyToMessageID string              `json:"reply_to_message_id,omitempty"` // Feishu reply-to message ID
+	UUID             string              `json:"uuid,omitempty"`
 }
 
 type InboundMessage struct {

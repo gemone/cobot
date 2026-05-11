@@ -7,7 +7,6 @@ import (
 	"github.com/cobot-agent/cobot/internal/agent"
 	brokersqlite "github.com/cobot-agent/cobot/internal/broker"
 
-	cobot "github.com/cobot-agent/cobot/pkg"
 	"github.com/cobot-agent/cobot/pkg/broker"
 )
 
@@ -17,7 +16,7 @@ type SetupConfig struct {
 	CronDir      string
 	RunsDir      string
 	NewAgent     func() *agent.Agent
-	Notifier     cobot.Notifier // for delivering cron results
+	Deliverer    Deliverer
 }
 
 // Setup creates and starts the cron subsystem: SQLite broker, store, executor, scheduler.
@@ -32,7 +31,7 @@ func Setup(ctx context.Context, cfg SetupConfig) (*Scheduler, broker.Broker, err
 	cronStore := NewStore(cfg.CronDir)
 	runStore := NewRunStore(cfg.RunsDir)
 	executeFn := NewAgentExecutor(cfg.NewAgent)
-	scheduler := NewScheduler(cronStore, executeFn, runStore, brokerDB, cfg.Notifier)
+	scheduler := NewScheduler(cronStore, executeFn, runStore, brokerDB, cfg.Deliverer)
 
 	if err := scheduler.Start(ctx); err != nil {
 		_ = brokerDB.Close()

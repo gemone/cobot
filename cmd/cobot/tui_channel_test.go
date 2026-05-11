@@ -8,7 +8,7 @@ import (
 )
 
 func TestTUIChannelSendReceive(t *testing.T) {
-	notify := make(chan cobot.ChannelMessage, 1)
+	notify := make(chan *cobot.OutboundMessage, 1)
 	ch := newTUIChannel("tui:test", notify)
 
 	if !ch.IsAlive() {
@@ -18,19 +18,19 @@ func TestTUIChannelSendReceive(t *testing.T) {
 		t.Fatalf("expected ID tui:test, got %s", ch.ID())
 	}
 
-	msg := cobot.ChannelMessage{Type: "info", Content: "hello"}
-	if err := ch.Send(context.Background(), msg); err != nil {
+	msg := &cobot.OutboundMessage{Text: "hello"}
+	if _, err := ch.Send(context.Background(), msg); err != nil {
 		t.Fatalf("Send failed: %v", err)
 	}
 
 	got := <-notify
-	if got.Content != "hello" {
-		t.Fatalf("expected content 'hello', got %q", got.Content)
+	if got.Text != "hello" {
+		t.Fatalf("expected text 'hello', got %q", got.Text)
 	}
 }
 
 func TestTUIChannelSendAfterClose(t *testing.T) {
-	notify := make(chan cobot.ChannelMessage, 1)
+	notify := make(chan *cobot.OutboundMessage, 1)
 	ch := newTUIChannel("tui:test", notify)
 
 	ch.Close()
@@ -39,14 +39,14 @@ func TestTUIChannelSendAfterClose(t *testing.T) {
 		t.Fatal("expected channel to be dead after Close")
 	}
 
-	err := ch.Send(context.Background(), cobot.ChannelMessage{})
+	_, err := ch.Send(context.Background(), &cobot.OutboundMessage{})
 	if err != context.Canceled {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }
 
 func TestTUIChannelDoubleClose(t *testing.T) {
-	notify := make(chan cobot.ChannelMessage, 1)
+	notify := make(chan *cobot.OutboundMessage, 1)
 	ch := newTUIChannel("tui:test", notify)
 
 	ch.Close()
@@ -58,10 +58,10 @@ func TestTUIChannelDoubleClose(t *testing.T) {
 }
 
 func TestPollNotificationsReceivesMessage(t *testing.T) {
-	notify := make(chan cobot.ChannelMessage, 1)
+	notify := make(chan *cobot.OutboundMessage, 1)
 	done := make(chan struct{})
 
-	notify <- cobot.ChannelMessage{Content: "test-msg"}
+	notify <- &cobot.OutboundMessage{Text: "test-msg"}
 
 	cmd := pollNotifications(notify, done)
 	msg := cmd()
@@ -70,13 +70,13 @@ func TestPollNotificationsReceivesMessage(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected notificationMsg, got %T", msg)
 	}
-	if nm.msg.Content != "test-msg" {
-		t.Fatalf("expected content 'test-msg', got %q", nm.msg.Content)
+	if nm.msg.Text != "test-msg" {
+		t.Fatalf("expected text 'test-msg', got %q", nm.msg.Text)
 	}
 }
 
 func TestPollNotificationsShutdownViaDone(t *testing.T) {
-	notify := make(chan cobot.ChannelMessage)
+	notify := make(chan *cobot.OutboundMessage)
 	done := make(chan struct{})
 	close(done)
 
@@ -89,7 +89,7 @@ func TestPollNotificationsShutdownViaDone(t *testing.T) {
 }
 
 func TestPollNotificationsShutdownViaNotifyClose(t *testing.T) {
-	notify := make(chan cobot.ChannelMessage)
+	notify := make(chan *cobot.OutboundMessage)
 	done := make(chan struct{})
 	close(notify)
 

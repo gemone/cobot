@@ -3,37 +3,14 @@ package cobot
 import (
 	"context"
 	"errors"
-	"net/http"
 	"sync"
 )
 
-// MessageType constants for ChannelMessage.Type.
-const (
-	MessageTypeCronResult = "cron_result"
-)
-
-// ChannelMessage represents a notification to be delivered to a Channel.
-type ChannelMessage struct {
-	Type    string // e.g. MessageTypeCronResult
-	Title   string // short summary
-	Content string // full content
-}
-
-// Notifier delivers ChannelMessages to a target channel by ID.
-type Notifier interface {
-	Notify(ctx context.Context, channelID string, msg ChannelMessage)
-}
-
-// Channel is an abstract communication endpoint that can receive notifications.
+// Channel is an abstract communication endpoint.
 // Implementations: TUI, Feishu, Reverse, etc.
 type Channel interface {
 	// ID returns a unique identifier for this channel (e.g., "tui:default").
 	ID() string
-
-	// Send delivers a notification message to this channel.
-	// Should be non-blocking or have a short timeout.
-	// Send must be safe to call concurrently with Close.
-	Send(ctx context.Context, msg ChannelMessage) error
 
 	// IsAlive returns true if the channel is still connected.
 	IsAlive() bool
@@ -44,7 +21,7 @@ type Channel interface {
 }
 
 // BaseChannel provides common fields and methods for Channel implementations.
-// Embed it in your struct and override Send() with your delivery logic.
+// Embed it in your struct to reuse ID/aliveness/locking behavior.
 type BaseChannel struct {
 	id    string
 	alive bool
@@ -120,7 +97,7 @@ var ErrNotSupported = errors.New("operation not supported by this platform")
 
 // MessageChannel extends Channel with bidirectional IM communication.
 // Implementations: Feishu, Reverse, etc.
-// The Gateway registers OnMessage handlers and calls SendMessage for replies.
+// The Gateway registers OnMessage handlers and calls Send for replies.
 type MessageChannel interface {
 	Channel
 
@@ -136,12 +113,8 @@ type MessageChannel interface {
 	// Callers that don't care about these events may pass nil.
 	OnEvent(handler func(ctx context.Context, event *ChannelEvent))
 
-	// SendMessage sends an outbound message to the platform.
-	SendMessage(ctx context.Context, msg *OutboundMessage) (*SendResult, error)
-
-	// EditMessage updates a previously sent message (for pseudo-streaming).
-	// Platforms that don't support editing should return nil, ErrNotSupported.
-	EditMessage(ctx context.Context, chatID, messageID, content string) (*SendResult, error)
+	// Send sends an outbound message to the platform.
+	Send(ctx context.Context, msg *OutboundMessage) (*SendResult, error)
 
 	// Start initiates the channel's connection (e.g. WebSocket handshake).
 	// It is called by the Gateway after RegisterChannel, before processing messages.
@@ -149,22 +122,32 @@ type MessageChannel interface {
 	Start(ctx context.Context) error
 }
 
+// EditableChannel is implemented by MessageChannel platforms that support
+// editing previously-sent messages (used for pseudo-streaming on platforms
+// like Feishu). Platforms without edit support simply do not implement it.
+type EditableChannel interface {
+	MessageChannel
+
+	// EditMessage updates a previously sent message.
+	EditMessage(ctx context.Context, chatID, messageID, content string) (*SendResult, error)
+}
+
 // ChannelEventType describes the type of a channel system event.
 type ChannelEventType string
 
 const (
-	ChannelEventMessageReaction  ChannelEventType = "message_reaction"
-	ChannelEventMessageRecalled  ChannelEventType = "message_recalled"
-	ChannelEventMemberJoined     ChannelEventType = "member_joined"
-	ChannelEventMemberLeft       ChannelEventType = "member_left"
+	ChannelEventMessageReaction ChannelEventType = "message_reaction"
+	ChannelEventMessageRecalled ChannelEventType = "message_recalled"
+	ChannelEventMemberJoined    ChannelEventType = "member_joined"
+	ChannelEventMemberLeft      ChannelEventType = "member_left"
 )
 
 // ChannelEvent represents a platform-specific system event (reactions, etc.)
 // delivered to the gateway via the OnEvent callback.
 type ChannelEvent struct {
 	Type      ChannelEventType // event type discriminator
-	Platform  string          // "feishu", etc.
-	Timestamp string          // ISO8601 event time
+	Platform  string           // "feishu", etc.
+	Timestamp string           // ISO8601 event time
 
 	// For message_reaction / message_recalled:
 	ChatID    string
@@ -181,21 +164,12 @@ type ChannelEvent struct {
 // Reactioner is an optional interface implemented by MessageChannels that support
 // adding emoji reactions to messages. Use a type assertion to check capability.
 // Example:
-//     if r, ok := ch.(cobot.Reactioner); ok {
-//         _ = r.ReactMessage(ctx, msgID, "👍")
-//     }
+//
+//	if r, ok := ch.(cobot.Reactioner); ok {
+//	    _ = r.ReactMessage(ctx, msgID, "👍")
+//	}
 type Reactioner interface {
 	// ReactMessage adds a reaction emoji to a message. The reactionType
 	// is a Unicode emoji string like "👍" or "🎉".
 	ReactMessage(ctx context.Context, messageID, reactionType string) error
-}
-
-// HTTPChannel is an optional extension of MessageChannel that provides a
-// webhook HTTP handler. Platforms like Feishu implement this so the Gateway
-// can automatically mount /webhook/{channel_id}/.
-type HTTPChannel interface {
-	MessageChannel
-
-	// HTTPHandler returns the platform's webhook handler for incoming events.
-	HTTPHandler() http.Handler
 }

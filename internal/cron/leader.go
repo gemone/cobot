@@ -20,24 +20,76 @@ func (s *Scheduler) renewLeaseLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := s.broker.Renew(ctx, schedulerLeaseKey, s.holderID, leaseTTL); err != nil {
-				slog.Warn("failed to renew scheduler lease, stepping down", "error", err)
+			renewErr := s.broker.Renew(ctx, schedulerLeaseKey, s.holderID, leaseTTL)
+			if isSQLITEBusy(renewErr) {
+				continue
+			}
+			if renewErr != nil {
+				slog.Warn("failed to renew scheduler lease, stepping down", "error", renewErr)
 				s.stopCronAndWait()
 				s.isLeader.Store(false)
-				// Try to re-acquire immediately
-				acquired, acqErr := s.broker.TryAcquire(ctx, schedulerLeaseKey, s.holderID, leaseTTL)
-				if acqErr != nil {
-					slog.Warn("failed to re-acquire scheduler lease", "error", acqErr)
-					// continue loop — will retry next tick
-				} else if acquired {
+				var acquired bool
+				for attempt := 0; attempt < 3; attempt++ {
+					acqErr := error(nil)
+					acquired, acqErr = s.broker.TryAcquire(ctx, schedulerLeaseKey, s.holderID, leaseTTL)
+					if !isSQLITEBusy(acqErr) {
+						if acqErr != nil {
+							slog.Warn("failed to re-acquire scheduler lease", "error", acqErr)
+						}
+						break
+					}
+					time.Sleep(time.Duration(50<<attempt) * time.Millisecond)
+				}
+				if acquired {
 					slog.Info("re-acquired scheduler leader lease", "holder", s.holderID)
 					s.becomeLeader()
 				}
-				// If not acquired, stay follower — will retry next tick
 				continue
 			}
 			// Sync jobs to pick up changes made on follower instances.
 			s.syncJobs()
+		}
+	}
+}
+
+// campaignLoop periodically attempts to acquire the leader lease when this
+// instance is a follower. Once acquired, it promotes to leader and exits.
+// This handles the case where the previous leader's lease expired (e.g. due
+// to SQLITE_BUSY preventing renewal) but no follower was actively campaigning.
+func (s *Scheduler) campaignLoop(ctx context.Context) {
+	defer s.wg.Done()
+
+	ticker := time.NewTicker(leaseRenewInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if s.isLeader.Load() {
+				return
+			}
+			acquired := false
+			for attempt := 0; attempt < 3; attempt++ {
+				var err error
+				acquired, err = s.broker.TryAcquire(ctx, schedulerLeaseKey, s.holderID, leaseTTL)
+				if !isSQLITEBusy(err) {
+					if err != nil {
+						slog.Debug("campaign: failed to acquire lease", "error", err)
+					}
+					break
+				}
+				time.Sleep(time.Duration(50<<attempt) * time.Millisecond)
+			}
+			if acquired {
+				slog.Info("campaign: acquired leader lease, promoting", "holder", s.holderID)
+				s.becomeLeader()
+				s.wg.Add(1)
+				go s.renewLeaseLoop(ctx)
+				s.wg.Add(1)
+				go s.cleanupLoop(ctx)
+				return
+			}
 		}
 	}
 }
@@ -63,7 +115,9 @@ func (s *Scheduler) rescheduleAllJobs() {
 		}
 		if err := s.scheduleJob(job); err != nil {
 			slog.Warn("failed to re-schedule job", "job_id", job.ID, "error", err)
+			continue
 		}
+		s.persistScheduledJob(job)
 	}
 }
 
@@ -112,12 +166,15 @@ func (s *Scheduler) syncJobs() {
 				slog.Warn("sync: failed to schedule job", "job_id", id, "error", err)
 				continue
 			}
+			s.persistScheduledJob(sj)
 			slog.Info("sync: scheduled new job", "job_id", id, "name", sj.Name)
 		} else if curSchedule := s.jobSchedules[id]; curSchedule != sj.Schedule {
 			slog.Info("sync: rescheduling job with changed schedule", "job_id", id)
 			if err := s.scheduleJobLocked(sj); err != nil {
 				slog.Warn("sync: failed to reschedule job", "job_id", id, "error", err)
+				continue
 			}
+			s.persistScheduledJob(sj)
 		}
 	}
 }

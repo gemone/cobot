@@ -19,7 +19,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/cobot-agent/cobot/internal/agent"
@@ -68,7 +67,7 @@ type tuiModel struct {
 	queuedStyle    lipgloss.Style
 	hubStyle       lipgloss.Style
 	wsMgr          *workspace.Manager
-	notificationCh chan cobot.ChannelMessage
+	notificationCh chan *cobot.OutboundMessage
 	tuiChDone      <-chan struct{}
 }
 
@@ -260,7 +259,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case notificationMsg:
 		m.messages = append(m.messages, chatMessage{
 			role: "system",
-			raw:  msg.msg.Content,
+			raw:  msg.msg.Text,
 		})
 		m.refreshViewport()
 		return m, pollNotifications(m.notificationCh, m.tuiChDone)
@@ -381,14 +380,14 @@ var tuiCmd = &cobra.Command{
 		}
 
 		// Set up TUI channel for cron notifications
-		notifyCh := make(chan cobot.ChannelMessage, 16)
+		notifyCh := make(chan *cobot.OutboundMessage, 16)
 		tuiChannelID := resolveTUIChannelID(cfg)
 		tuiCh := newTUIChannel(tuiChannelID, notifyCh)
-		tuiSessionID := "tui:" + uuid.NewString()
 		if res.ChannelMgr != nil {
-			res.ChannelMgr.Register(tuiCh, tuiSessionID)
-			res.ChannelMgr.MarkLocal(tuiSessionID)
-			defer res.ChannelMgr.Unregister(tuiCh.ID(), tuiSessionID)
+			if err := res.ChannelMgr.Register(tuiCh); err != nil {
+				return err
+			}
+			defer res.ChannelMgr.Unregister(tuiCh.ID())
 			defer tuiCh.Close()
 		}
 
