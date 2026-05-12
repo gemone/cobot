@@ -51,14 +51,16 @@ func pathMatchesRoot(path, root, sep string) bool {
 }
 
 type SandboxConfig struct {
-	VirtualRoot     string   `yaml:"virtual_root,omitempty"`
-	Root            string   `yaml:"root"`
-	AllowPaths      []string `yaml:"allow_paths,omitempty"`
-	ReadonlyPaths   []string `yaml:"readonly_paths,omitempty"`
-	AllowNetwork    bool     `yaml:"allow_network"`
-	BlockedCommands []string `yaml:"blocked_commands,omitempty"`
+	VirtualRoot         string   `yaml:"virtual_root,omitempty"`
+	Root                string   `yaml:"root"`
+	AllowPaths          []string `yaml:"allow_paths,omitempty"`
+	ReadonlyPaths       []string `yaml:"readonly_paths,omitempty"`
+	AllowNetwork        bool     `yaml:"allow_network"`
+	AllowedNetworkTools []string `yaml:"allowed_network_tools,omitempty"`
+	BlockedCommands     []string `yaml:"blocked_commands,omitempty"`
 
-	allowNetworkSet bool `yaml:"-"`
+	allowNetworkSet        bool `yaml:"-"`
+	allowedNetworkToolsSet bool `yaml:"-"`
 }
 
 func cloneStrings(values []string) []string {
@@ -72,6 +74,7 @@ func (s SandboxConfig) Clone() SandboxConfig {
 	cloned := s
 	cloned.AllowPaths = cloneStrings(s.AllowPaths)
 	cloned.ReadonlyPaths = cloneStrings(s.ReadonlyPaths)
+	cloned.AllowedNetworkTools = cloneStrings(s.AllowedNetworkTools)
 	cloned.BlockedCommands = cloneStrings(s.BlockedCommands)
 	return cloned
 }
@@ -84,8 +87,20 @@ func (s *SandboxConfig) SetAllowNetwork(allow bool) {
 	s.allowNetworkSet = true
 }
 
+func (s *SandboxConfig) SetAllowedNetworkTools(tools []string) {
+	if s == nil {
+		return
+	}
+	s.AllowedNetworkTools = cloneStrings(tools)
+	s.allowedNetworkToolsSet = true
+}
+
 func (s *SandboxConfig) HasAllowNetworkOverride() bool {
 	return s != nil && s.allowNetworkSet
+}
+
+func (s *SandboxConfig) HasAllowedNetworkToolsOverride() bool {
+	return s != nil && s.allowedNetworkToolsSet
 }
 
 func MergeConfigs(base, override *SandboxConfig) SandboxConfig {
@@ -108,6 +123,10 @@ func MergeConfigs(base, override *SandboxConfig) SandboxConfig {
 	if len(override.ReadonlyPaths) > 0 {
 		merged.ReadonlyPaths = cloneStrings(override.ReadonlyPaths)
 	}
+	if override.HasAllowedNetworkToolsOverride() {
+		merged.AllowedNetworkTools = cloneStrings(override.AllowedNetworkTools)
+		merged.allowedNetworkToolsSet = true
+	}
 	if len(override.BlockedCommands) > 0 {
 		merged.BlockedCommands = cloneStrings(override.BlockedCommands)
 	}
@@ -125,17 +144,19 @@ func (s *SandboxConfig) UnmarshalYAML(value *yaml.Node) error {
 	}
 	*s = SandboxConfig(decoded)
 	s.allowNetworkSet = yamlMappingHasKey(value, "allow_network")
+	s.allowedNetworkToolsSet = yamlMappingHasKey(value, "allowed_network_tools")
 	return nil
 }
 
 func (s SandboxConfig) MarshalYAML() (any, error) {
 	type raw struct {
-		VirtualRoot     string   `yaml:"virtual_root,omitempty"`
-		Root            string   `yaml:"root"`
-		AllowPaths      []string `yaml:"allow_paths,omitempty"`
-		ReadonlyPaths   []string `yaml:"readonly_paths,omitempty"`
-		AllowNetwork    *bool    `yaml:"allow_network,omitempty"`
-		BlockedCommands []string `yaml:"blocked_commands,omitempty"`
+		VirtualRoot         string    `yaml:"virtual_root,omitempty"`
+		Root                string    `yaml:"root"`
+		AllowPaths          []string  `yaml:"allow_paths,omitempty"`
+		ReadonlyPaths       []string  `yaml:"readonly_paths,omitempty"`
+		AllowNetwork        *bool     `yaml:"allow_network,omitempty"`
+		AllowedNetworkTools *[]string `yaml:"allowed_network_tools,omitempty"`
+		BlockedCommands     []string  `yaml:"blocked_commands,omitempty"`
 	}
 	encoded := raw{
 		VirtualRoot:     s.VirtualRoot,
@@ -143,6 +164,10 @@ func (s SandboxConfig) MarshalYAML() (any, error) {
 		AllowPaths:      cloneStrings(s.AllowPaths),
 		ReadonlyPaths:   cloneStrings(s.ReadonlyPaths),
 		BlockedCommands: cloneStrings(s.BlockedCommands),
+	}
+	if s.allowedNetworkToolsSet || len(s.AllowedNetworkTools) > 0 {
+		tools := cloneStrings(s.AllowedNetworkTools)
+		encoded.AllowedNetworkTools = &tools
 	}
 	if s.AllowNetwork || s.allowNetworkSet {
 		allow := s.AllowNetwork
@@ -504,6 +529,25 @@ func (s *Sandbox) VirtualRoot() string {
 // AllowNetwork reports whether network access is permitted.
 func (s *Sandbox) AllowNetwork() bool {
 	return s != nil && s.config.AllowNetwork
+}
+
+// AllowsNetworkTool reports whether the given tool may access the network.
+// allow_network is the global kill switch; when disabled, no tool may use network.
+// When enabled, web_fetch is allowed by default and other tools require an explicit
+// allowlist entry in allowed_network_tools.
+func (s *Sandbox) AllowsNetworkTool(tool string) bool {
+	if s == nil || tool == "" || !s.config.AllowNetwork {
+		return false
+	}
+	if len(s.config.AllowedNetworkTools) == 0 {
+		return tool == "web_fetch"
+	}
+	for _, allowed := range s.config.AllowedNetworkTools {
+		if allowed == tool {
+			return true
+		}
+	}
+	return false
 }
 
 // HasWritePolicy reports whether the sandbox has any write restrictions configured.

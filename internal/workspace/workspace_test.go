@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -43,6 +44,10 @@ func TestSaveLoadDefinition_RoundTrip(t *testing.T) {
 		Type: WorkspaceTypeCustom,
 		Path: "/some/custom/path",
 		Root: "/project/root",
+		Sandbox: &sandbox.SandboxConfig{
+			AllowNetwork:        true,
+			AllowedNetworkTools: []string{"web_fetch"},
+		},
 	}
 
 	if err := saveDefinition(original, defPath); err != nil {
@@ -65,6 +70,15 @@ func TestSaveLoadDefinition_RoundTrip(t *testing.T) {
 	}
 	if loaded.Root != original.Root {
 		t.Errorf("Root = %s, want %s", loaded.Root, original.Root)
+	}
+	if loaded.Sandbox == nil {
+		t.Fatal("Sandbox is nil")
+	}
+	if !loaded.Sandbox.AllowNetwork {
+		t.Fatal("Sandbox.AllowNetwork = false, want true")
+	}
+	if len(loaded.Sandbox.AllowedNetworkTools) != 1 || loaded.Sandbox.AllowedNetworkTools[0] != "web_fetch" {
+		t.Fatalf("Sandbox.AllowedNetworkTools = %v, want [web_fetch]", loaded.Sandbox.AllowedNetworkTools)
 	}
 }
 
@@ -350,7 +364,16 @@ func TestEffectiveSandbox_AgentOverrideWins(t *testing.T) {
 
 func TestEffectiveSandbox_MergesPolicyFields(t *testing.T) {
 	ws := &Workspace{
-		Definition: &WorkspaceDefinition{Name: "myproject", Type: WorkspaceTypeProject, Root: "/project/root"},
+		Definition: &WorkspaceDefinition{
+			Name: "myproject",
+			Type: WorkspaceTypeProject,
+			Root: "/project/root",
+			Sandbox: &sandbox.SandboxConfig{
+				AllowPaths:      []string{"/definition/allow"},
+				ReadonlyPaths:   []string{"/definition/readonly"},
+				BlockedCommands: []string{"wget"},
+			},
+		},
 		Config: &WorkspaceConfig{
 			Name: "myproject",
 			Type: WorkspaceTypeProject,
@@ -388,8 +411,54 @@ func TestEffectiveSandbox_MergesPolicyFields(t *testing.T) {
 	if !effective.HasAllowNetworkOverride() {
 		t.Fatal("expected effective sandbox to track allow_network override")
 	}
+	if effective.AllowedNetworkTools != nil {
+		t.Fatalf("expected no allowed_network_tools in merged sandbox, got %v", effective.AllowedNetworkTools)
+	}
 	if effective.VirtualRoot == "" {
 		t.Fatal("effective.VirtualRoot should not be empty")
+	}
+}
+
+func TestEffectiveSandbox_DefinitionSandboxIsApplied(t *testing.T) {
+	ws := &Workspace{
+		Definition: &WorkspaceDefinition{
+			Name: "default",
+			Type: WorkspaceTypeDefault,
+			Sandbox: &sandbox.SandboxConfig{
+				AllowNetwork:        true,
+				AllowedNetworkTools: []string{"web_fetch"},
+			},
+		},
+		Config: &WorkspaceConfig{
+			Name: "default",
+			Type: WorkspaceTypeDefault,
+			Sandbox: sandbox.SandboxConfig{
+				AllowNetwork:        false,
+				AllowedNetworkTools: []string{"web_fetch", "shell_exec"},
+			},
+		},
+		DataDir: "/data/workspaces/default",
+	}
+
+	agentSandbox := &sandbox.SandboxConfig{
+		AllowedNetworkTools: []string{"web_fetch", "shell_exec"},
+	}
+	sb := ws.EffectiveSandbox(agentSandbox)
+	if !sb.AllowNetwork {
+		t.Fatal("expected definition sandbox allow_network=true to apply")
+	}
+	sandboxInstance := sandbox.NewSandbox(*sb)
+	if !sandboxInstance.AllowsNetworkTool("web_fetch") {
+		t.Fatal("expected web_fetch to be allowed by definition sandbox")
+	}
+	if sandboxInstance.AllowsNetworkTool("shell_exec") {
+		t.Fatal("expected shell_exec to remain blocked by default")
+	}
+	if !sb.AllowNetwork {
+		t.Fatal("expected definition sandbox allow_network=true to win over workspace state")
+	}
+	if len(sb.AllowedNetworkTools) != 1 || sb.AllowedNetworkTools[0] != "web_fetch" {
+		t.Fatalf("expected definition allowlist to win, got %v", sb.AllowedNetworkTools)
 	}
 }
 
@@ -414,5 +483,77 @@ func TestEffectiveSandbox_NoRootAtAll(t *testing.T) {
 	}
 	if sb.VirtualRoot == "" {
 		t.Error("sandbox.VirtualRoot should not be empty")
+	}
+}
+
+func TestWorkspace_SaveConfig_Concurrent(t *testing.T) {
+	tmpDir := t.TempDir()
+	dataDir := filepath.Join(tmpDir, "ws-data")
+	os.MkdirAll(dataDir, 0755)
+
+	ws := &Workspace{
+		Definition: &WorkspaceDefinition{
+			Name: "test",
+			Type: WorkspaceTypeCustom,
+		},
+		Config: &WorkspaceConfig{
+			ID:   "test-id",
+			Name: "test",
+			Type: WorkspaceTypeCustom,
+		},
+		DataDir: dataDir,
+	}
+
+	// Launch multiple goroutines that concurrently modify and save config
+	done := make(chan error, 10)
+	for i := 0; i < 10; i++ {
+		go func(idx int) {
+			// Simulate modifying config
+			ws.Config.EnabledSkills = append(ws.Config.EnabledSkills, fmt.Sprintf("skill-%d", idx))
+
+			// Save config
+			if err := ws.SaveConfig(); err != nil {
+				done <- err
+			} else {
+				done <- nil
+			}
+		}(i)
+	}
+
+	// Collect all results
+	var errors []error
+	for i := 0; i < 10; i++ {
+		err := <-done
+		if err != nil {
+			errors = append(errors, err)
+		}
+	}
+
+	// Check for errors
+	if len(errors) > 0 {
+		t.Fatalf("concurrent SaveConfig failed with errors: %v", errors)
+	}
+
+	// Verify config was saved and can be loaded
+	cfgPath := ws.ConfigPath()
+	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
+		t.Fatalf("config file was not created at %s", cfgPath)
+	}
+
+	loaded, err := loadWorkspaceConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("loadWorkspaceConfig failed: %v", err)
+	}
+
+	if loaded.ID != ws.Config.ID {
+		t.Errorf("loaded ID = %s, want %s", loaded.ID, ws.Config.ID)
+	}
+	if loaded.Name != ws.Config.Name {
+		t.Errorf("loaded Name = %s, want %s", loaded.Name, ws.Config.Name)
+	}
+
+	// Verify that the YAML file is not corrupted by checking if it can be parsed
+	if len(loaded.EnabledSkills) == 0 {
+		t.Error("EnabledSkills should not be empty after concurrent saves")
 	}
 }

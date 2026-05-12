@@ -21,7 +21,7 @@ var toolsListCmd = &cobra.Command{
 
 		builtinTools := []string{
 			"filesystem_read", "filesystem_write", "shell_exec",
-			"filesystem_grep",
+			"filesystem_grep", "web_fetch",
 			"memory_search", "memory_store", "l3_deep_search",
 			"workspace_config_update", "skills_list", "skill_view",
 			"skill_manage", "persona_update",

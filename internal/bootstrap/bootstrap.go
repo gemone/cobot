@@ -330,6 +330,7 @@ func configureSandboxTools(a *agent.Agent, ws *workspace.Workspace, agentCfg *co
 	a.RegisterTool(tools.NewListDirTool(sb))
 	a.RegisterTool(tools.NewSearchFilesTool(sb))
 	a.RegisterTool(tools.NewGrepFilesTool(sb))
+	a.RegisterTool(tools.NewWebFetchTool(sb))
 
 	a.RegisterTool(tools.NewShellExecTool(tools.WithShellSandbox(sb)))
 

@@ -7,8 +7,8 @@ import (
 
 // ImageKey represents a Feishu image key with optional alt text.
 type ImageKey struct {
-	Key  string
-	Alt  string
+	Key string
+	Alt string
 }
 
 // Mention represents a parsed Feishu @mention element.

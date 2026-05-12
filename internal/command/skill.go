@@ -11,8 +11,8 @@ import (
 
 type skillCmd struct{}
 
-func (c *skillCmd) Name() string   { return "skill" }
-func (c *skillCmd) Help() string   { return "manage skills (/skill list|view <name>|reload)" }
+func (c *skillCmd) Name() string { return "skill" }
+func (c *skillCmd) Help() string { return "manage skills (/skill list|view <name>|reload)" }
 func (c *skillCmd) Execute(ctx context.Context, cmdCtx cobot.CommandContext) (*cobot.OutboundMessage, error) {
 	args := strings.TrimSpace(cmdCtx.Text)
 	parts := strings.Fields(args)

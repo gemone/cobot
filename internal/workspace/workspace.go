@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,10 +23,11 @@ const (
 )
 
 type WorkspaceDefinition struct {
-	Name string        `yaml:"name"`
-	Type WorkspaceType `yaml:"type"`
-	Path string        `yaml:"path,omitempty"`
-	Root string        `yaml:"root,omitempty"`
+	Name    string                 `yaml:"name"`
+	Type    WorkspaceType          `yaml:"type"`
+	Path    string                 `yaml:"path,omitempty"`
+	Root    string                 `yaml:"root,omitempty"`
+	Sandbox *sandbox.SandboxConfig `yaml:"sandbox,omitempty"`
 }
 
 func (d *WorkspaceDefinition) ResolvePath(dataDir string) string {
@@ -53,6 +55,7 @@ type Workspace struct {
 	Definition *WorkspaceDefinition
 	Config     *WorkspaceConfig
 	DataDir    string
+	mu         sync.Mutex // Protects concurrent modification of Config
 }
 
 func (w *Workspace) IsDefault() bool {
@@ -129,13 +132,16 @@ func (w *Workspace) ExternalAgent(name string) (*cobot.ExternalAgentConfig, bool
 	return nil, false
 }
 
-// EffectiveSandbox returns the final SandboxConfig by merging workspace config
-// with optional agent-level overrides.
+// EffectiveSandbox returns the final SandboxConfig by merging definition config,
+// workspace config, and optional agent-level overrides.
+// Definition-layer network policy is reapplied last so workspace state cannot
+// weaken it.
 // When no explicit sandbox root is configured, it defaults to the workspace
 // space directory — this ensures sandbox is always active, restricting writes
 // to workspace/<name>/space for both filesystem and shell_exec tools.
 func (w *Workspace) EffectiveSandbox(agentSandbox *sandbox.SandboxConfig) *sandbox.SandboxConfig {
-	merged := sandbox.MergeConfigs(&w.Config.Sandbox, agentSandbox)
+	merged := sandbox.MergeConfigs(w.Definition.Sandbox, &w.Config.Sandbox)
+	merged = sandbox.MergeConfigs(&merged, agentSandbox)
 
 	// Fall back to workspace root when no explicit sandbox root is set.
 	if merged.Root == "" {
@@ -165,6 +171,15 @@ func (w *Workspace) EffectiveSandbox(agentSandbox *sandbox.SandboxConfig) *sandb
 		}
 	}
 
+	if w.Definition.Sandbox != nil {
+		if w.Definition.Sandbox.HasAllowNetworkOverride() {
+			merged.SetAllowNetwork(w.Definition.Sandbox.AllowNetwork)
+		}
+		if w.Definition.Sandbox.HasAllowedNetworkToolsOverride() || len(w.Definition.Sandbox.AllowedNetworkTools) > 0 {
+			merged.SetAllowedNetworkTools(w.Definition.Sandbox.AllowedNetworkTools)
+		}
+	}
+
 	result := merged.Clone()
 	return &result
 }
@@ -188,6 +203,9 @@ func (w *Workspace) EnsureDirs() error {
 }
 
 func (w *Workspace) SaveConfig() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	w.Config.UpdatedAt = time.Now()
 	if err := os.MkdirAll(filepath.Dir(w.ConfigPath()), 0755); err != nil {
 		return fmt.Errorf("create config dir: %w", err)

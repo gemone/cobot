@@ -80,11 +80,12 @@ func TestWorkspaceConfigUpdateTool_Sandbox(t *testing.T) {
 	tool := &WorkspaceConfigUpdateTool{workspace: ws}
 
 	args, _ := json.Marshal(map[string]interface{}{
-		"sandbox_root":     "/tmp/sandbox",
-		"allow_paths":      []string{"/usr/local"},
-		"readonly_paths":   []string{"/etc/ssl"},
-		"allow_network":    false,
-		"blocked_commands": []string{"rm -rf"},
+		"sandbox_root":          "/tmp/sandbox",
+		"allow_paths":           []string{"/usr/local"},
+		"readonly_paths":        []string{"/etc/ssl"},
+		"allow_network":         false,
+		"allowed_network_tools": []string{"web_fetch"},
+		"blocked_commands":      []string{"rm -rf"},
 	})
 	result, err := tool.Execute(context.Background(), args)
 	if err != nil {
@@ -109,6 +110,9 @@ func TestWorkspaceConfigUpdateTool_Sandbox(t *testing.T) {
 	if !ws.Config.Sandbox.HasAllowNetworkOverride() {
 		t.Fatal("expected allow_network override to be tracked")
 	}
+	if len(ws.Config.Sandbox.AllowedNetworkTools) != 1 || ws.Config.Sandbox.AllowedNetworkTools[0] != "web_fetch" {
+		t.Fatalf("unexpected allowed_network_tools: %v", ws.Config.Sandbox.AllowedNetworkTools)
+	}
 	if len(ws.Config.Sandbox.BlockedCommands) != 1 || ws.Config.Sandbox.BlockedCommands[0] != "rm -rf" {
 		t.Fatalf("unexpected blocked_commands: %v", ws.Config.Sandbox.BlockedCommands)
 	}
@@ -120,6 +124,9 @@ func TestWorkspaceConfigUpdateTool_Sandbox(t *testing.T) {
 	text := string(data)
 	if !strings.Contains(text, "allow_network: false") {
 		t.Fatalf("saved config missing allow_network=false: %s", text)
+	}
+	if !strings.Contains(text, "allowed_network_tools:") {
+		t.Fatalf("saved config missing allowed_network_tools: %s", text)
 	}
 	if !strings.Contains(text, "readonly_paths:") {
 		t.Fatalf("saved config missing readonly_paths: %s", text)
@@ -282,6 +289,117 @@ func TestWorkspaceConfigUpdateTool_ReadonlyPathsBlockedWhenSandboxActive(t *test
 		t.Fatal("expected readonly_paths update to fail while sandbox is active")
 	}
 	if err != nil && err.Error() != "cannot modify readonly_paths while sandbox is active" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestWorkspaceConfigUpdateTool_AllowedNetworkToolsFlag(t *testing.T) {
+	tests := []struct {
+		name        string
+		tools       *[]string
+		expectFlag  bool
+		expectTools []string
+		description string
+	}{
+		{
+			name:        "Case 1: set allowed_network_tools to [web_fetch]",
+			tools:       &[]string{"web_fetch"},
+			expectFlag:  true,
+			expectTools: []string{"web_fetch"},
+			description: "Should set flag and store tool",
+		},
+		{
+			name:        "Case 2: set allowed_network_tools to empty list",
+			tools:       &[]string{},
+			expectFlag:  true,
+			expectTools: []string{},
+			description: "Should set flag even for empty list (explicit override)",
+		},
+		{
+			name:        "Case 3: do not modify allowed_network_tools (nil)",
+			tools:       nil,
+			expectFlag:  false,
+			expectTools: nil,
+			description: "Should not set flag when not explicitly modified",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.description, func(t *testing.T) {
+			ws := newTestWorkspace(t)
+			if err := ws.SaveConfig(); err != nil {
+				t.Fatal(err)
+			}
+
+			tool := &WorkspaceConfigUpdateTool{workspace: ws}
+
+			// Build args
+			args := map[string]interface{}{}
+			if tc.tools != nil {
+				args["allowed_network_tools"] = *tc.tools
+			}
+			jsonArgs, _ := json.Marshal(args)
+
+			result, err := tool.Execute(context.Background(), jsonArgs)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result != "workspace config updated" {
+				t.Fatalf("unexpected result: %s", result)
+			}
+
+			// Verify AllowedNetworkTools list
+			if tc.expectTools == nil {
+				if ws.Config.Sandbox.AllowedNetworkTools != nil {
+					t.Fatalf("expected AllowedNetworkTools to be nil, got %v", ws.Config.Sandbox.AllowedNetworkTools)
+				}
+			} else {
+				if len(ws.Config.Sandbox.AllowedNetworkTools) != len(tc.expectTools) {
+					t.Fatalf("expected %d tools, got %d", len(tc.expectTools), len(ws.Config.Sandbox.AllowedNetworkTools))
+				}
+				for i, expected := range tc.expectTools {
+					if ws.Config.Sandbox.AllowedNetworkTools[i] != expected {
+						t.Fatalf("expected tool %q at index %d, got %q", expected, i, ws.Config.Sandbox.AllowedNetworkTools[i])
+					}
+				}
+			}
+
+			// CRITICAL: Verify HasAllowedNetworkToolsOverride flag
+			hasOverride := ws.Config.Sandbox.HasAllowedNetworkToolsOverride()
+			if hasOverride != tc.expectFlag {
+				t.Fatalf("%s: expected HasAllowedNetworkToolsOverride=%v, got %v", tc.description, tc.expectFlag, hasOverride)
+			}
+
+			// For non-empty tools, verify config is persisted with allowed_network_tools field
+			if tc.tools != nil && len(*tc.tools) > 0 {
+				data, err := os.ReadFile(ws.ConfigPath())
+				if err != nil {
+					t.Fatalf("read saved config: %v", err)
+				}
+				text := string(data)
+				if !strings.Contains(text, "allowed_network_tools:") {
+					t.Fatalf("saved config missing allowed_network_tools for %s: %s", tc.description, text)
+				}
+			}
+		})
+	}
+}
+
+func TestWorkspaceConfigUpdateTool_BlockedCommandsBlockedWhenSandboxActive(t *testing.T) {
+	ws := newTestWorkspace(t)
+	tool := &WorkspaceConfigUpdateTool{
+		workspace: ws,
+		sandbox:   sandbox.NewSandbox(sandbox.SandboxConfig{VirtualRoot: sandbox.VirtualHome("test"), Root: "/tmp/real"}),
+	}
+
+	args, _ := json.Marshal(map[string]interface{}{
+		"blocked_commands": []string{"rm -rf", "dd"},
+	})
+	_, err := tool.Execute(context.Background(), args)
+	if err == nil {
+		t.Fatal("expected blocked_commands update to fail while sandbox is active")
+	}
+	if err != nil && err.Error() != "cannot modify blocked_commands while sandbox is active" {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

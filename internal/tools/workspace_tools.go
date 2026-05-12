@@ -51,13 +51,14 @@ func (t *WorkspaceConfigUpdateTool) Parameters() json.RawMessage {
 
 func (t *WorkspaceConfigUpdateTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var params struct {
-		EnabledMCP      *[]string `json:"enabled_mcp"`
-		EnabledSkills   *[]string `json:"enabled_skills"`
-		SandboxRoot     *string   `json:"sandbox_root"`
-		AllowPaths      *[]string `json:"allow_paths"`
-		ReadonlyPaths   *[]string `json:"readonly_paths"`
-		AllowNetwork    *bool     `json:"allow_network"`
-		BlockedCommands *[]string `json:"blocked_commands"`
+		EnabledMCP          *[]string `json:"enabled_mcp"`
+		EnabledSkills       *[]string `json:"enabled_skills"`
+		SandboxRoot         *string   `json:"sandbox_root"`
+		AllowPaths          *[]string `json:"allow_paths"`
+		ReadonlyPaths       *[]string `json:"readonly_paths"`
+		AllowNetwork        *bool     `json:"allow_network"`
+		AllowedNetworkTools *[]string `json:"allowed_network_tools"`
+		BlockedCommands     *[]string `json:"blocked_commands"`
 	}
 	if err := decodeArgs(args, &params); err != nil {
 		return "", err
@@ -94,7 +95,16 @@ func (t *WorkspaceConfigUpdateTool) Execute(ctx context.Context, args json.RawMe
 		}
 		cfg.Sandbox.SetAllowNetwork(*params.AllowNetwork)
 	}
+	if params.AllowedNetworkTools != nil {
+		if t.sandbox != nil {
+			return "", fmt.Errorf("cannot modify allowed_network_tools while sandbox is active")
+		}
+		cfg.Sandbox.SetAllowedNetworkTools(*params.AllowedNetworkTools)
+	}
 	if params.BlockedCommands != nil {
+		if t.sandbox != nil {
+			return "", fmt.Errorf("cannot modify blocked_commands while sandbox is active")
+		}
 		cfg.Sandbox.BlockedCommands = *params.BlockedCommands
 	}
 

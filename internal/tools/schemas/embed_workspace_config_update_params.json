@@ -29,6 +29,11 @@
       "type": "boolean",
       "description": "Whether shell_exec may use network-capable commands"
     },
+    "allowed_network_tools": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Tools explicitly allowed to access the network when allow_network is true"
+    },
     "blocked_commands": {
       "type": "array",
       "items": { "type": "string" },

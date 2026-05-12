@@ -44,8 +44,8 @@ type skillSummary struct {
 // in-memory lookups. For mutating operations (manage), it still uses the
 // workspace directory directly.
 type skillsHandler struct {
-	sm  *agent.SkillManager
-	ws  *workspace.Workspace
+	sm        *agent.SkillManager
+	ws        *workspace.Workspace
 	refresher cobot.SkillsPromptRefresher
 }
 

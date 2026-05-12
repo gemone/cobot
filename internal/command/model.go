@@ -11,8 +11,8 @@ import (
 
 type modelCmd struct{}
 
-func (c *modelCmd) Name() string   { return "model" }
-func (c *modelCmd) Help() string    { return "show or switch the current model (/model <provider:model>)" }
+func (c *modelCmd) Name() string { return "model" }
+func (c *modelCmd) Help() string { return "show or switch the current model (/model <provider:model>)" }
 func (c *modelCmd) Execute(ctx context.Context, cmdCtx cobot.CommandContext) (*cobot.OutboundMessage, error) {
 	args := strings.TrimSpace(cmdCtx.Text)
 

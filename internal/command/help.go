@@ -13,8 +13,8 @@ type helpCmd struct {
 	cmds []cobot.Command
 }
 
-func (c *helpCmd) Name() string   { return "help" }
-func (c *helpCmd) Help() string   { return "show this help text" }
+func (c *helpCmd) Name() string { return "help" }
+func (c *helpCmd) Help() string { return "show this help text" }
 func (c *helpCmd) Execute(ctx context.Context, cmdCtx cobot.CommandContext) (*cobot.OutboundMessage, error) {
 	cmds := c.cmds
 	if cmds == nil {

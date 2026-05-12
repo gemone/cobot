@@ -12,22 +12,22 @@ import (
 type CmdKind int
 
 const (
-	CmdKindNone CmdKind = iota
-	CmdKindCall // simple command: curl, ls, rm -rf
-	CmdKindPipeline // pipeline: a | b | c
-	CmdKindAnd // &&: a && b
-	CmdKindOr // ||: a || b
-	CmdKindSemi // ; : a ; b
-	CmdKindSubshell // (...): subshell grouping
-	CmdKindCmdSubst // $(...) or `...`: command substitution
-	CmdKindWhile // while loop
-	CmdKindUntil // until loop
-	CmdKindFor // for loop
-	CmdKindIf // if/then/else
-	CmdKindCase // case statement
-	CmdKindFunc // function declaration
-	CmdKindNegated // ! command (wraps a child)
-	CmdKindBackground // command & (wraps a child)
+	CmdKindNone       CmdKind = iota
+	CmdKindCall               // simple command: curl, ls, rm -rf
+	CmdKindPipeline           // pipeline: a | b | c
+	CmdKindAnd                // &&: a && b
+	CmdKindOr                 // ||: a || b
+	CmdKindSemi               // ; : a ; b
+	CmdKindSubshell           // (...): subshell grouping
+	CmdKindCmdSubst           // $(...) or `...`: command substitution
+	CmdKindWhile              // while loop
+	CmdKindUntil              // until loop
+	CmdKindFor                // for loop
+	CmdKindIf                 // if/then/else
+	CmdKindCase               // case statement
+	CmdKindFunc               // function declaration
+	CmdKindNegated            // ! command (wraps a child)
+	CmdKindBackground         // command & (wraps a child)
 )
 
 func (k CmdKind) String() string {
@@ -146,8 +146,8 @@ type CaseArm struct {
 
 // StmtInfo holds statement-level metadata.
 type StmtInfo struct {
-	Background bool   // ends with &
-	Negated    bool   // starts with !
+	Background bool    // ends with &
+	Negated    bool    // starts with !
 	Redirs     []Redir // I/O redirects: >, >>, <, <<, >|, etc.
 }
 
@@ -408,10 +408,10 @@ func buildWhileOrUntil(c *syntax.WhileClause, isUntil bool) *CmdNode {
 		body = append(body, buildCmdNode(s))
 	}
 	return &CmdNode{
-		Kind:  kind,
-		Raw:   serializeNode(c),
-		Cond:  cond,
-		Body:  body,
+		Kind: kind,
+		Raw:  serializeNode(c),
+		Cond: cond,
+		Body: body,
 	}
 }
 
@@ -465,11 +465,11 @@ func buildIf(c *syntax.IfClause) *CmdNode {
 		else_ = append(else_, buildCommand(c.Else))
 	}
 	return &CmdNode{
-		Kind:  CmdKindIf,
-		Raw:   serializeNode(c),
-		Cond:  cond,
-		Body:  then,
-		Else:  else_,
+		Kind: CmdKindIf,
+		Raw:  serializeNode(c),
+		Cond: cond,
+		Body: then,
+		Else: else_,
 	}
 }
 
@@ -490,8 +490,8 @@ func buildCase(c *syntax.CaseClause) *CmdNode {
 			body = append(body, buildCmdNode(s))
 		}
 		arms = append(arms, &CaseArm{
-			Patterns: patterns,
-			Body:     body,
+			Patterns:  patterns,
+			Body:      body,
 			IsDefault: isDefault,
 		})
 	}

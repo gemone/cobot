@@ -140,7 +140,7 @@ func TestRestrictedTokenWriteBlocking(t *testing.T) {
 	// Write to allowed dir should succeed.
 	allowedFile := filepath.Join(allowed, "test.txt")
 	req := &LaunchRequest{
-		Shell:   "cmd", ShellFlag: "/C",
+		Shell: "cmd", ShellFlag: "/C",
 		Command: `echo ok > "` + allowedFile + `" && type "` + allowedFile + `"`,
 		Config:  cfg,
 	}

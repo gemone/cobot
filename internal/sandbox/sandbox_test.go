@@ -618,6 +618,103 @@ func TestIsBlockedCommand_NetworkBlocked(t *testing.T) {
 	}
 }
 
+func TestAllowsNetworkTool(t *testing.T) {
+	cfg := &SandboxConfig{AllowNetwork: true}
+	sb := NewSandbox(*cfg)
+
+	if !sb.AllowsNetworkTool("web_fetch") {
+		t.Fatal("expected web_fetch to be allowed by default when network is enabled")
+	}
+	if sb.AllowsNetworkTool("shell_exec") {
+		t.Fatal("expected shell_exec to be blocked by default")
+	}
+
+	cfg.AllowedNetworkTools = []string{"web_fetch", "shell_exec"}
+	sb = NewSandbox(*cfg)
+	if !sb.AllowsNetworkTool("shell_exec") {
+		t.Fatal("expected shell_exec to be allowed when explicitly configured")
+	}
+
+	cfg.AllowNetwork = false
+	sb = NewSandbox(*cfg)
+	if sb.AllowsNetworkTool("web_fetch") {
+		t.Fatal("expected all network to be blocked when allow_network is false")
+	}
+}
+
+func TestMergeConfigs_ExplicitEmptyAllowedNetworkToolsOverridesBase(t *testing.T) {
+	base := &SandboxConfig{
+		AllowNetwork:        true,
+		AllowedNetworkTools: []string{"web_fetch", "shell_exec"},
+	}
+	override := &SandboxConfig{}
+	override.SetAllowedNetworkTools(nil)
+
+	merged := MergeConfigs(base, override)
+	if len(merged.AllowedNetworkTools) != 0 {
+		t.Fatalf("expected empty allowlist to override base, got %v", merged.AllowedNetworkTools)
+	}
+}
+
+func TestMergeConfigs_UnsetFlagPreservesBase(t *testing.T) {
+	// When override has AllowedNetworkTools values but the flag is not set,
+	// it should NOT override the base configuration.
+	base := &SandboxConfig{
+		AllowedNetworkTools: []string{"base_tool"},
+	}
+	base.allowedNetworkToolsSet = true
+
+	override := &SandboxConfig{}
+	override.AllowedNetworkTools = []string{"override_tool"}
+	// NOTE: override.allowedNetworkToolsSet is false (default)
+
+	merged := MergeConfigs(base, override)
+	if len(merged.AllowedNetworkTools) != 1 || merged.AllowedNetworkTools[0] != "base_tool" {
+		t.Fatalf("expected base tools [base_tool] to be preserved, got %v", merged.AllowedNetworkTools)
+	}
+	if !merged.allowedNetworkToolsSet {
+		t.Fatalf("expected allowedNetworkToolsSet to remain true from base")
+	}
+}
+
+func TestMergeConfigs_ExplicitEmptyOverridesWithFlag(t *testing.T) {
+	// When override explicitly sets empty list with flag, it should override base
+	base := &SandboxConfig{
+		AllowedNetworkTools: []string{"web_fetch", "shell_exec"},
+	}
+	base.allowedNetworkToolsSet = true
+
+	override := &SandboxConfig{}
+	override.SetAllowedNetworkTools([]string{})
+
+	merged := MergeConfigs(base, override)
+	if len(merged.AllowedNetworkTools) != 0 {
+		t.Fatalf("expected empty list to override base, got %v", merged.AllowedNetworkTools)
+	}
+	if !merged.allowedNetworkToolsSet {
+		t.Fatalf("expected allowedNetworkToolsSet flag to be true after explicit empty override")
+	}
+}
+
+func TestMergeConfigs_NoOverridePreservesBase(t *testing.T) {
+	// When override doesn't set AllowedNetworkTools at all, base should be preserved
+	base := &SandboxConfig{
+		AllowedNetworkTools: []string{"base_tool"},
+	}
+	base.allowedNetworkToolsSet = true
+
+	override := &SandboxConfig{}
+	// No SetAllowedNetworkTools call, flag remains false
+
+	merged := MergeConfigs(base, override)
+	if len(merged.AllowedNetworkTools) != 1 || merged.AllowedNetworkTools[0] != "base_tool" {
+		t.Fatalf("expected base config to be preserved, got %v", merged.AllowedNetworkTools)
+	}
+	if !merged.allowedNetworkToolsSet {
+		t.Fatalf("expected base flag to be preserved")
+	}
+}
+
 func TestSandboxedCmd_NilSafety(t *testing.T) {
 	// Nil SandboxedCmd.Start() should return error
 	var scmd *SandboxedCmd

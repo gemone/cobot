@@ -414,36 +414,48 @@ func TestShellExecTool_NetworkAllowed(t *testing.T) {
 	dir := t.TempDir()
 	vr := sandboxpkg.VirtualHome("myws")
 	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
+		VirtualRoot:         vr,
+		Root:                dir,
+		AllowNetwork:        true,
+		AllowedNetworkTools: []string{"web_fetch", "shell_exec"},
+	})
+
+	tool := NewShellExecTool(WithShellSandbox(sb))
+	args, _ := json.Marshal(map[string]any{"command": "curl --max-time 1 https://127.0.0.1:1"})
+	_, err := tool.Execute(context.Background(), args)
+	if err != nil && strings.Contains(err.Error(), "network command blocked") {
+		t.Errorf("network command should be allowed by policy, got: %v", err)
+	}
+}
+
+func TestShellExecTool_NetworkBlockedByPolicy(t *testing.T) {
+	dir := t.TempDir()
+	vr := sandboxpkg.VirtualHome("myws")
+	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
 		VirtualRoot:  vr,
 		Root:         dir,
 		AllowNetwork: true,
 	})
 
 	tool := NewShellExecTool(WithShellSandbox(sb))
-	// curl will fail network-wise but should not be rejected by policy.
-	args, _ := json.Marshal(map[string]any{"command": "curl --max-time 1 https://127.0.0.1:1"})
+	args, _ := json.Marshal(map[string]any{"command": "curl https://example.com"})
 	_, err := tool.Execute(context.Background(), args)
-	// We expect an error (connection refused) but NOT a "network command blocked" error.
-	if err != nil && strings.Contains(err.Error(), "network") {
-		t.Errorf("network command should be allowed, got: %v", err)
+	if err == nil {
+		t.Fatal("expected curl to be blocked by policy")
+	}
+	if !strings.Contains(err.Error(), "network command") {
+		t.Fatalf("expected network policy error, got %v", err)
 	}
 }
 
-func TestShellExecTool_NetworkNotBlockedByAppLayer(t *testing.T) {
-	// On platforms with OS-level network isolation (Linux: Landlock, macOS:
-	// Seatbelt), when a sandbox config exists (even with AllowNetwork=false),
-	// the application-level network blacklist should NOT be applied — OS-level
-	// enforcement handles it instead. On Windows, the Restricted Token sandbox
-	// only provides filesystem isolation, so HasNetworkIsolation() returns false
-	// and the app-layer blacklist is still applied. This test uses a stub
-	// launcher so it verifies the app-layer gating logic, not actual network
-	// enforcement.
+func TestShellExecTool_NetworkAllowedByPolicy(t *testing.T) {
 	dir := t.TempDir()
 	vr := sandboxpkg.VirtualHome("myws")
 	sb := sandboxpkg.NewSandbox(sandboxpkg.SandboxConfig{
-		VirtualRoot:  vr,
-		Root:         dir,
-		AllowNetwork: false,
+		VirtualRoot:         vr,
+		Root:                dir,
+		AllowNetwork:        true,
+		AllowedNetworkTools: []string{"web_fetch", "shell_exec"},
 	})
 
 	stub := &stubLauncher{output: []byte("done\n")}
@@ -454,26 +466,17 @@ func TestShellExecTool_NetworkNotBlockedByAppLayer(t *testing.T) {
 
 	args, _ := json.Marshal(map[string]any{"command": "curl https://example.com"})
 	result, err := tool.Execute(context.Background(), args)
-
-	if sb.HasNetworkIsolation() {
-		// Linux/macOS: OS-level enforcement handles network, app-layer blacklist skipped.
-		if err != nil {
-			t.Fatalf("command should reach the launcher without app-layer rejection, got: %v", err)
-		}
-		if stub.request == nil {
-			t.Fatal("expected command to reach the launcher")
-		}
-		if stub.request.Command != "curl https://example.com" {
-			t.Errorf("launcher received command %q, want %q", stub.request.Command, "curl https://example.com")
-		}
-		if !strings.Contains(result, "done") {
-			t.Errorf("expected launcher output, got %q", result)
-		}
-	} else {
-		// Windows: Restricted Token provides FS-only isolation, app-layer blacklist still active.
-		if err == nil {
-			t.Fatal("expected curl to be blocked by app-layer blacklist on platforms without network isolation")
-		}
+	if err != nil {
+		t.Fatalf("command should reach the launcher without policy rejection, got: %v", err)
+	}
+	if stub.request == nil {
+		t.Fatal("expected command to reach the launcher")
+	}
+	if stub.request.Command != "curl https://example.com" {
+		t.Errorf("launcher received command %q, want %q", stub.request.Command, "curl https://example.com")
+	}
+	if !strings.Contains(result, "done") {
+		t.Errorf("expected launcher output, got %q", result)
 	}
 }
 

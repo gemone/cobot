@@ -278,6 +278,19 @@ memory_enabled: true
 
 Environment variable expansion: `${VAR_NAME}` patterns are resolved at load time.
 
+### Workspace Definitions (`~/.config/cobot/workspaces/<name>.yaml`)
+
+This is the pre-defined workspace layer. Sandbox network policy here wins over workspace state and agent overrides.
+
+```yaml
+name: default
+type: default
+sandbox:
+  allow_network: true
+  allowed_network_tools:
+    - web_fetch
+```
+
 ### Workspace State (`~/.local/share/cobot/workspace/<name>/workspace.yaml`)
 
 ```yaml
@@ -406,6 +419,7 @@ Additional agent tools:
 | `filesystem_read` | Read files within sandbox |
 | `filesystem_write` | Write files within sandbox |
 | `shell_exec` | Execute shell commands within sandbox |
+| `web_fetch` | Fetch static web pages and return markdown or raw HTML; network is controlled by sandbox policy |
 | `memory_search` | Full-text search across MemPalace |
 | `memory_store` | Store content in MemPalace |
 | `l3_deep_search` | Deep semantic search across memory |

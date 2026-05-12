@@ -8,8 +8,8 @@ import (
 
 type memoryCmd struct{}
 
-func (c *memoryCmd) Name() string   { return "memory" }
-func (c *memoryCmd) Help() string  { return "manage session memory (/memory status)" }
+func (c *memoryCmd) Name() string { return "memory" }
+func (c *memoryCmd) Help() string { return "manage session memory (/memory status)" }
 func (c *memoryCmd) Execute(ctx context.Context, cmdCtx cobot.CommandContext) (*cobot.OutboundMessage, error) {
 	args := cmdCtx.Text
 

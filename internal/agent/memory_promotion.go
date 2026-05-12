@@ -15,12 +15,12 @@ import (
 
 // MemoryPromoter runs LTM promotion for inactive sessions in the background.
 type MemoryPromoter struct {
-	stm               cobot.ShortTermMemory
-	sessionsDir       string
-	retentionDays     int
-	archiveInterval   time.Duration
-	ctx               context.Context
-	cancel            context.CancelFunc
+	stm             cobot.ShortTermMemory
+	sessionsDir     string
+	retentionDays   int
+	archiveInterval time.Duration
+	ctx             context.Context
+	cancel          context.CancelFunc
 }
 
 // NewMemoryPromoter creates a MemoryPromoter that archives inactive sessions

@@ -32,7 +32,7 @@ const (
 	stmMaxItems = 20
 
 	stmRoomContext     = "context"     // user directives, decisions, task state
-	stmRoomTodo        = "todo"       // TODO items tracked during session
+	stmRoomTodo        = "todo"        // TODO items tracked during session
 	stmRoomNotes       = "notes"       // temporary notes, user requirements
 	stmRoomObservation = "observation" // tool results, build/test outcomes, errors
 	stmRoomCompressed  = "compressed"  // compressed session records from compressor

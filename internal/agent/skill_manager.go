@@ -16,10 +16,10 @@ import (
 // SkillManager maintains an in-memory index of skills for fast lookups
 // without scanning the filesystem on every list/view operation.
 type SkillManager struct {
-	mu       sync.RWMutex
-	catalog  map[string]skills.Skill // keyed by skill name
-	dirs     []string               // global dir first, workspace dir second (workspace wins)
-	ws       *workspace.Workspace
+	mu        sync.RWMutex
+	catalog   map[string]skills.Skill // keyed by skill name
+	dirs      []string                // global dir first, workspace dir second (workspace wins)
+	ws        *workspace.Workspace
 	refresher cobot.SkillsPromptRefresher
 }
 
@@ -27,9 +27,9 @@ type SkillManager struct {
 func NewSkillManager(ws *workspace.Workspace, refresher cobot.SkillsPromptRefresher) (*SkillManager, error) {
 	dirs := []string{workspace.GlobalSkillsDir(), ws.SkillsDir()}
 	sm := &SkillManager{
-		catalog:  make(map[string]skills.Skill),
-		dirs:     dirs,
-		ws:       ws,
+		catalog:   make(map[string]skills.Skill),
+		dirs:      dirs,
+		ws:        ws,
 		refresher: refresher,
 	}
 	if err := sm.Reload(context.Background()); err != nil {

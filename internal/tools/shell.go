@@ -103,15 +103,10 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		return "", fmt.Errorf("command is blocked by sandbox policy")
 	}
 
-	// Apply app-layer network command blacklist when:
-	//  1. No sandbox is configured at all (defense in depth), OR
-	//  2. Sandbox exists but OS-level network isolation is unavailable
-	//     (e.g. Windows Restricted Token only provides FS isolation),
-	//     so the incomplete blacklist is the only network restriction available.
-	// On Linux/macOS the kernel-level enforcement (Seatbelt/Landlock) is
-	// comprehensive and the app-layer blacklist is skipped to avoid misleading
-	// errors and false positives from the incomplete command list.
-	needAppBlacklist := t.sandbox == nil || (!t.sandbox.AllowNetwork() && !t.sandbox.HasNetworkIsolation())
+	// Apply the app-layer network blacklist unless the sandbox explicitly allows
+	// network access for shell_exec. web_fetch has its own network policy and is
+	// not governed by this command blacklist.
+	needAppBlacklist := t.sandbox == nil || !t.sandbox.AllowsNetworkTool("shell_exec")
 	if needAppBlacklist {
 		if err := checkNetworkCommand(cmdStr); err != nil {
 			return "", err

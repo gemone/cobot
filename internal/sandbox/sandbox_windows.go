@@ -62,8 +62,8 @@ const (
 	trusteeIsSID     = 0
 	trusteeIsUnknown = 0
 
-	fileAllAccess    = 0x001F01FF
-	fileDeleteChild  = 0x00000040
+	fileAllAccess   = 0x001F01FF
+	fileDeleteChild = 0x00000040
 )
 
 type explicitAccessW struct {
