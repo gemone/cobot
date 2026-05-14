@@ -18,6 +18,9 @@ func newTestWorkspace(t *testing.T) *workspace.Workspace {
 	def := &workspace.WorkspaceDefinition{
 		Name: "test",
 		Type: workspace.WorkspaceTypeDefault,
+		Sandbox: &sandbox.SandboxConfig{
+			ValidNetworkTools: []string{"web_fetch", "shell_exec"},
+		},
 	}
 	cfg := &workspace.WorkspaceConfig{
 		ID:        "test-id",
@@ -127,6 +130,9 @@ func TestWorkspaceConfigUpdateTool_Sandbox(t *testing.T) {
 	}
 	if !strings.Contains(text, "allowed_network_tools:") {
 		t.Fatalf("saved config missing allowed_network_tools: %s", text)
+	}
+	if strings.Contains(text, "valid_network_tools:") {
+		t.Fatalf("saved config should not contain valid_network_tools: %s", text)
 	}
 	if !strings.Contains(text, "readonly_paths:") {
 		t.Fatalf("saved config missing readonly_paths: %s", text)
@@ -382,6 +388,44 @@ func TestWorkspaceConfigUpdateTool_AllowedNetworkToolsFlag(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestWorkspaceConfigUpdateTool_AllowedNetworkToolsRejectsToolOutsideDefinitionCatalog(t *testing.T) {
+	ws := newTestWorkspace(t)
+	ws.Definition.Sandbox = &sandbox.SandboxConfig{
+		ValidNetworkTools: []string{"web_fetch"},
+	}
+
+	tool := &WorkspaceConfigUpdateTool{workspace: ws}
+	args, _ := json.Marshal(map[string]interface{}{
+		"allowed_network_tools": []string{"shell_exec"},
+	})
+
+	_, err := tool.Execute(context.Background(), args)
+	if err == nil {
+		t.Fatal("expected invalid network tool error")
+	}
+	if !strings.Contains(err.Error(), `invalid network tool "shell_exec"`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestWorkspaceConfigUpdateTool_AllowedNetworkToolsRequiresDefinitionCatalog(t *testing.T) {
+	ws := newTestWorkspace(t)
+	ws.Definition.Sandbox = nil
+
+	tool := &WorkspaceConfigUpdateTool{workspace: ws}
+	args, _ := json.Marshal(map[string]interface{}{
+		"allowed_network_tools": []string{"web_fetch"},
+	})
+
+	_, err := tool.Execute(context.Background(), args)
+	if err == nil {
+		t.Fatal("expected missing catalog error")
+	}
+	if !strings.Contains(err.Error(), "sandbox.valid_network_tools must be configured") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

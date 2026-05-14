@@ -2,6 +2,9 @@ package bootstrap
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cobot-agent/cobot/internal/agent"
@@ -9,7 +12,9 @@ import (
 	"github.com/cobot-agent/cobot/internal/channel"
 	"github.com/cobot-agent/cobot/internal/command"
 	"github.com/cobot-agent/cobot/internal/cron"
+	"github.com/cobot-agent/cobot/internal/sandbox"
 	"github.com/cobot-agent/cobot/internal/tools"
+	"github.com/cobot-agent/cobot/internal/workspace"
 	cobot "github.com/cobot-agent/cobot/pkg"
 )
 
@@ -108,5 +113,42 @@ func TestConfigureGateway_WiresCronSchedulerIntoCommandRegistry(t *testing.T) {
 	}
 	if !handled {
 		t.Fatal("expected /cron list to be handled")
+	}
+}
+
+func TestConfigureAgentForWorkspace_RejectsAgentSandboxCatalogBypass(t *testing.T) {
+	dir := t.TempDir()
+	ws := &workspace.Workspace{
+		Definition: &workspace.WorkspaceDefinition{
+			Name: "default",
+			Type: workspace.WorkspaceTypeDefault,
+			Sandbox: &sandbox.SandboxConfig{
+				ValidNetworkTools: []string{"web_fetch"},
+			},
+		},
+		Config: &workspace.WorkspaceConfig{
+			ID:   "ws-id",
+			Name: "default",
+			Type: workspace.WorkspaceTypeDefault,
+		},
+		DataDir: dir,
+	}
+	if err := ws.EnsureDirs(); err != nil {
+		t.Fatalf("EnsureDirs: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(ws.AgentsDir(), "main.yaml"), []byte("model: openai:gpt-4o\nsandbox:\n  allowed_network_tools:\n    - shell_exec\n"), 0644); err != nil {
+		t.Fatalf("write agent config: %v", err)
+	}
+
+	a := agent.New(&cobot.Config{}, tools.NewRegistry())
+	a.SetChannelManager(channel.NewManager())
+	defer a.Close()
+
+	err := ConfigureAgentForWorkspace(a, ws, nil)
+	if err == nil {
+		t.Fatal("expected ConfigureAgentForWorkspace to reject agent sandbox catalog bypass")
+	}
+	if !strings.Contains(err.Error(), `invalid network tool "shell_exec"`) {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

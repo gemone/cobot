@@ -99,7 +99,13 @@ func (t *WorkspaceConfigUpdateTool) Execute(ctx context.Context, args json.RawMe
 		if t.sandbox != nil {
 			return "", fmt.Errorf("cannot modify allowed_network_tools while sandbox is active")
 		}
-		cfg.Sandbox.SetAllowedNetworkTools(*params.AllowedNetworkTools)
+		normalizedTools, err := t.workspace.ValidateAllowedNetworkTools(*params.AllowedNetworkTools)
+		if err != nil {
+			return "", err
+		}
+		if err := cfg.Sandbox.SetAllowedNetworkTools(normalizedTools); err != nil {
+			return "", err
+		}
 	}
 	if params.BlockedCommands != nil {
 		if t.sandbox != nil {

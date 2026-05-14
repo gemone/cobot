@@ -287,9 +287,16 @@ name: default
 type: default
 sandbox:
   allow_network: true
+  valid_network_tools:
+    - web_fetch
+    - shell_exec
   allowed_network_tools:
     - web_fetch
 ```
+
+- `sandbox.valid_network_tools` is the catalog of tool names that may ever be allowlisted for that workspace. It lives only in the workspace definition under `~/.config/cobot/workspaces/<name>.yaml`.
+- `sandbox.allowed_network_tools` is the active allowlist used at runtime. It must be a subset of `sandbox.valid_network_tools`.
+- Runtime config layers do not define the catalog: workspace state, agent overrides, and project overlay config may set `allowed_network_tools`, but not `valid_network_tools`.
 
 ### Workspace State (`~/.local/share/cobot/workspace/<name>/workspace.yaml`)
 
@@ -311,6 +318,8 @@ sandbox:
   allow_paths:
     - /tmp
   allow_network: true
+  allowed_network_tools:
+    - web_fetch
 
 default_agent: main
 external_agents:
@@ -343,7 +352,7 @@ session:
 
 ### Project Overlay Config (`<project-root>/.cobot/config.yaml`)
 
-When a resolved workspace has a project root, Cobot also loads an optional project-local config overlay from `.cobot/config.yaml` inside that root. This affects runtime settings such as model selection without mutating the workspace state file under the data directory.
+When a resolved workspace has a project root, Cobot also loads an optional project-local config overlay from `.cobot/config.yaml` inside that root. This affects runtime settings such as model selection without mutating the workspace state file under the data directory. This overlay is runtime-only; sandbox whitelist catalogs such as `sandbox.valid_network_tools` must still be defined in the workspace definition file under `~/.config/cobot/workspaces/`.
 
 ```yaml
 model: anthropic:claude-sonnet-4-20250514

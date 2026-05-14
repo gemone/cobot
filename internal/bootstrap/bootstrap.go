@@ -143,7 +143,10 @@ func ConfigureAgentForWorkspace(a *agent.Agent, ws *workspace.Workspace, registr
 	if agentCfg != nil {
 		agentSandbox = agentCfg.Sandbox
 	}
-	sandboxConfig := ws.EffectiveSandbox(agentSandbox)
+	sandboxConfig, err := ws.EffectiveSandbox(agentSandbox)
+	if err != nil {
+		return fmt.Errorf("effective sandbox: %w", err)
+	}
 
 	// Create the SkillManager before sandbox tools (RegisterSkillsTools needs it).
 	configureSkillManager(a, ws, sm)

@@ -32,7 +32,7 @@
     "allowed_network_tools": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Tools explicitly allowed to access the network when allow_network is true"
+      "description": "Active allowlist of network-capable tools when allow_network is true; entries must come from the workspace definition sandbox.valid_network_tools catalog"
     },
     "blocked_commands": {
       "type": "array",

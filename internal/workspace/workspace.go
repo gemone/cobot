@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -139,7 +140,7 @@ func (w *Workspace) ExternalAgent(name string) (*cobot.ExternalAgentConfig, bool
 // When no explicit sandbox root is configured, it defaults to the workspace
 // space directory — this ensures sandbox is always active, restricting writes
 // to workspace/<name>/space for both filesystem and shell_exec tools.
-func (w *Workspace) EffectiveSandbox(agentSandbox *sandbox.SandboxConfig) *sandbox.SandboxConfig {
+func (w *Workspace) EffectiveSandbox(agentSandbox *sandbox.SandboxConfig) (*sandbox.SandboxConfig, error) {
 	merged := sandbox.MergeConfigs(w.Definition.Sandbox, &w.Config.Sandbox)
 	merged = sandbox.MergeConfigs(&merged, agentSandbox)
 
@@ -171,17 +172,46 @@ func (w *Workspace) EffectiveSandbox(agentSandbox *sandbox.SandboxConfig) *sandb
 		}
 	}
 
-	if w.Definition.Sandbox != nil {
-		if w.Definition.Sandbox.HasAllowNetworkOverride() {
-			merged.SetAllowNetwork(w.Definition.Sandbox.AllowNetwork)
-		}
-		if w.Definition.Sandbox.HasAllowedNetworkToolsOverride() || len(w.Definition.Sandbox.AllowedNetworkTools) > 0 {
-			merged.SetAllowedNetworkTools(w.Definition.Sandbox.AllowedNetworkTools)
-		}
+	if err := w.applyDefinitionSandboxNetworkPolicy(&merged); err != nil {
+		return nil, err
 	}
 
 	result := merged.Clone()
-	return &result
+	return &result, nil
+}
+
+func (w *Workspace) applyDefinitionSandboxNetworkPolicy(merged *sandbox.SandboxConfig) error {
+	if w == nil || w.Definition == nil || w.Definition.Sandbox == nil || merged == nil {
+		return nil
+	}
+
+	definitionSandbox := w.Definition.Sandbox
+	if definitionSandbox.HasAllowNetworkOverride() {
+		merged.SetAllowNetwork(definitionSandbox.AllowNetwork)
+	}
+
+	catalogBounded := definitionSandbox.HasValidNetworkToolsOverride() || len(definitionSandbox.ValidNetworkTools) > 0
+	if catalogBounded {
+		merged.SetValidNetworkTools(definitionSandbox.ValidNetworkTools)
+	}
+
+	if definitionSandbox.HasAllowedNetworkToolsOverride() || len(definitionSandbox.AllowedNetworkTools) > 0 {
+		if err := merged.SetAllowedNetworkTools(definitionSandbox.AllowedNetworkTools); err != nil {
+			return fmt.Errorf("workspace definition sandbox.allowed_network_tools: %w", err)
+		}
+		return nil
+	}
+
+	if !catalogBounded || len(merged.AllowedNetworkTools) == 0 {
+		return nil
+	}
+	if len(merged.ValidNetworkTools) == 0 {
+		return fmt.Errorf("effective sandbox.allowed_network_tools must be empty because workspace definition sandbox.valid_network_tools is empty")
+	}
+	if err := merged.ValidateAllowedNetworkTools(); err != nil {
+		return fmt.Errorf("effective sandbox.allowed_network_tools exceeds workspace definition sandbox.valid_network_tools: %w", err)
+	}
+	return nil
 }
 
 func (w *Workspace) EnsureDirs() error {
@@ -250,6 +280,39 @@ func saveDefinition(d *WorkspaceDefinition, path string) error {
 	return config.SaveYAML(path, d)
 }
 
+func definitionValidNetworkTools(def *WorkspaceDefinition) []string {
+	if def == nil || def.Sandbox == nil {
+		return nil
+	}
+	return def.Sandbox.ValidNetworkTools
+}
+
+func validateAllowedNetworkTools(tools, validTools []string) ([]string, error) {
+	if len(validTools) == 0 {
+		return nil, fmt.Errorf("workspace definition sandbox.valid_network_tools must be configured before setting sandbox.allowed_network_tools")
+	}
+	return sandbox.ValidateNetworkTools(tools, validTools)
+}
+
+func validateWorkspaceSandbox(def *WorkspaceDefinition, cfg *WorkspaceConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	if cfg.Sandbox.HasValidNetworkToolsOverride() || len(cfg.Sandbox.ValidNetworkTools) > 0 {
+		return fmt.Errorf("workspace config cannot set sandbox.valid_network_tools; define it in the workspace definition")
+	}
+	if cfg.Sandbox.HasAllowedNetworkToolsOverride() || len(cfg.Sandbox.AllowedNetworkTools) > 0 {
+		normalized, err := validateAllowedNetworkTools(cfg.Sandbox.AllowedNetworkTools, definitionValidNetworkTools(def))
+		if err != nil {
+			return err
+		}
+		if err := cfg.Sandbox.SetAllowedNetworkTools(normalized); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func loadDefinition(path string) (*WorkspaceDefinition, error) {
 	var d WorkspaceDefinition
 	if err := config.LoadYAML(path, &d); err != nil {
@@ -278,18 +341,32 @@ func newWorkspaceConfig(name string, wsType WorkspaceType, root string) *Workspa
 	}
 }
 
-func newWorkspaceFromDefinition(def *WorkspaceDefinition, dataDir string) *Workspace {
+func (w *Workspace) ValidateAllowedNetworkTools(tools []string) ([]string, error) {
+	if w == nil || w.Definition == nil {
+		return nil, fmt.Errorf("workspace definition is not loaded")
+	}
+	return validateAllowedNetworkTools(tools, definitionValidNetworkTools(w.Definition))
+}
+
+func newWorkspaceFromDefinition(def *WorkspaceDefinition, dataDir string) (*Workspace, error) {
 	resolvedDataDir := def.ResolvePath(dataDir)
 	cfgPath := filepath.Join(resolvedDataDir, "workspace.yaml")
 
 	cfg, err := loadWorkspaceConfig(cfgPath)
 	if err != nil {
-		cfg = newWorkspaceConfig(def.Name, def.Type, def.Root)
+		if errors.Is(err, os.ErrNotExist) {
+			cfg = newWorkspaceConfig(def.Name, def.Type, def.Root)
+		} else {
+			return nil, err
+		}
+	}
+	if err := validateWorkspaceSandbox(def, cfg); err != nil {
+		return nil, fmt.Errorf("workspace config: %w", err)
 	}
 
 	return &Workspace{
 		Definition: def,
 		Config:     cfg,
 		DataDir:    resolvedDataDir,
-	}
+	}, nil
 }

@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -67,9 +68,15 @@ func (m *Manager) Resolve(name string) (*Workspace, error) {
 	defPath := filepath.Join(m.definitionsDir, name+".yaml")
 	def, err := loadDefinition(defPath)
 	if err != nil {
-		return nil, fmt.Errorf("workspace not found: %s", name)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("workspace not found: %s", name)
+		}
+		return nil, fmt.Errorf("load workspace definition %q: %w", name, err)
 	}
-	ws := newWorkspaceFromDefinition(def, m.dataDir)
+	ws, err := newWorkspaceFromDefinition(def, m.dataDir)
+	if err != nil {
+		return nil, fmt.Errorf("load workspace %q: %w", name, err)
+	}
 	return ws, nil
 }
 
@@ -97,7 +104,10 @@ func (m *Manager) Create(name string, wsType WorkspaceType, root string, customP
 		return nil, err
 	}
 
-	ws := newWorkspaceFromDefinition(def, m.dataDir)
+	ws, err := newWorkspaceFromDefinition(def, m.dataDir)
+	if err != nil {
+		return nil, fmt.Errorf("load workspace %q: %w", name, err)
+	}
 	ws.Config = newWorkspaceConfig(name, wsType, root)
 
 	if err := ws.EnsureDirs(); err != nil {
@@ -187,7 +197,7 @@ func (m *Manager) Discover(startDir string) (*Workspace, error) {
 
 			defPath := filepath.Join(m.definitionsDir, projectName+".yaml")
 			if def, err := loadDefinition(defPath); err == nil {
-				return newWorkspaceFromDefinition(def, m.dataDir), nil
+				return newWorkspaceFromDefinition(def, m.dataDir)
 			}
 
 			return m.Create(projectName, WorkspaceTypeProject, dir, "")

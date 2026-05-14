@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,6 +47,7 @@ func TestSaveLoadDefinition_RoundTrip(t *testing.T) {
 		Root: "/project/root",
 		Sandbox: &sandbox.SandboxConfig{
 			AllowNetwork:        true,
+			ValidNetworkTools:   []string{"web_fetch", "shell_exec"},
 			AllowedNetworkTools: []string{"web_fetch"},
 		},
 	}
@@ -79,6 +81,9 @@ func TestSaveLoadDefinition_RoundTrip(t *testing.T) {
 	}
 	if len(loaded.Sandbox.AllowedNetworkTools) != 1 || loaded.Sandbox.AllowedNetworkTools[0] != "web_fetch" {
 		t.Fatalf("Sandbox.AllowedNetworkTools = %v, want [web_fetch]", loaded.Sandbox.AllowedNetworkTools)
+	}
+	if len(loaded.Sandbox.ValidNetworkTools) != 2 || loaded.Sandbox.ValidNetworkTools[0] != "web_fetch" || loaded.Sandbox.ValidNetworkTools[1] != "shell_exec" {
+		t.Fatalf("Sandbox.ValidNetworkTools = %v, want [web_fetch shell_exec]", loaded.Sandbox.ValidNetworkTools)
 	}
 }
 
@@ -287,7 +292,10 @@ func TestEffectiveSandbox_FallbackToWorkspaceRoot(t *testing.T) {
 		},
 	}
 
-	sandbox := ws.EffectiveSandbox(nil)
+	sandbox, err := ws.EffectiveSandbox(nil)
+	if err != nil {
+		t.Fatalf("EffectiveSandbox returned error: %v", err)
+	}
 	if sandbox.Root != "/project/root" {
 		t.Errorf("sandbox.Root = %q, want /project/root", sandbox.Root)
 	}
@@ -310,7 +318,10 @@ func TestEffectiveSandbox_FallbackToDefinitionRoot(t *testing.T) {
 		},
 	}
 
-	sandbox := ws.EffectiveSandbox(nil)
+	sandbox, err := ws.EffectiveSandbox(nil)
+	if err != nil {
+		t.Fatalf("EffectiveSandbox returned error: %v", err)
+	}
 	if sandbox.Root != "/def/root" {
 		t.Errorf("sandbox.Root = %q, want /def/root", sandbox.Root)
 	}
@@ -334,7 +345,10 @@ func TestEffectiveSandbox_ExplicitRootWins(t *testing.T) {
 		},
 	}
 
-	sandbox := ws.EffectiveSandbox(nil)
+	sandbox, err := ws.EffectiveSandbox(nil)
+	if err != nil {
+		t.Fatalf("EffectiveSandbox returned error: %v", err)
+	}
 	if sandbox.Root != "/explicit/sandbox" {
 		t.Errorf("sandbox.Root = %q, want /explicit/sandbox", sandbox.Root)
 	}
@@ -356,7 +370,10 @@ func TestEffectiveSandbox_AgentOverrideWins(t *testing.T) {
 	}
 
 	agentSandbox := &sandbox.SandboxConfig{Root: "/agent/root"}
-	sandbox := ws.EffectiveSandbox(agentSandbox)
+	sandbox, err := ws.EffectiveSandbox(agentSandbox)
+	if err != nil {
+		t.Fatalf("EffectiveSandbox returned error: %v", err)
+	}
 	if sandbox.Root != "/agent/root" {
 		t.Errorf("sandbox.Root = %q, want /agent/root", sandbox.Root)
 	}
@@ -392,7 +409,10 @@ func TestEffectiveSandbox_MergesPolicyFields(t *testing.T) {
 	}
 	agentSandbox.SetAllowNetwork(false)
 
-	effective := ws.EffectiveSandbox(agentSandbox)
+	effective, err := ws.EffectiveSandbox(agentSandbox)
+	if err != nil {
+		t.Fatalf("EffectiveSandbox returned error: %v", err)
+	}
 	if effective.Root != "/workspace/root" {
 		t.Fatalf("effective.Root = %q, want /workspace/root", effective.Root)
 	}
@@ -426,6 +446,7 @@ func TestEffectiveSandbox_DefinitionSandboxIsApplied(t *testing.T) {
 			Type: WorkspaceTypeDefault,
 			Sandbox: &sandbox.SandboxConfig{
 				AllowNetwork:        true,
+				ValidNetworkTools:   []string{"web_fetch", "shell_exec"},
 				AllowedNetworkTools: []string{"web_fetch"},
 			},
 		},
@@ -443,7 +464,10 @@ func TestEffectiveSandbox_DefinitionSandboxIsApplied(t *testing.T) {
 	agentSandbox := &sandbox.SandboxConfig{
 		AllowedNetworkTools: []string{"web_fetch", "shell_exec"},
 	}
-	sb := ws.EffectiveSandbox(agentSandbox)
+	sb, err := ws.EffectiveSandbox(agentSandbox)
+	if err != nil {
+		t.Fatalf("EffectiveSandbox returned error: %v", err)
+	}
 	if !sb.AllowNetwork {
 		t.Fatal("expected definition sandbox allow_network=true to apply")
 	}
@@ -459,6 +483,184 @@ func TestEffectiveSandbox_DefinitionSandboxIsApplied(t *testing.T) {
 	}
 	if len(sb.AllowedNetworkTools) != 1 || sb.AllowedNetworkTools[0] != "web_fetch" {
 		t.Fatalf("expected definition allowlist to win, got %v", sb.AllowedNetworkTools)
+	}
+	if len(sb.ValidNetworkTools) != 2 || sb.ValidNetworkTools[0] != "web_fetch" || sb.ValidNetworkTools[1] != "shell_exec" {
+		t.Fatalf("expected definition catalog to win, got %v", sb.ValidNetworkTools)
+	}
+}
+
+func TestNewWorkspaceFromDefinition_RejectsWorkspaceConfigToolsOutsideDefinitionCatalog(t *testing.T) {
+	tmpDir := t.TempDir()
+	def := &WorkspaceDefinition{
+		Name: "test",
+		Type: WorkspaceTypeDefault,
+		Sandbox: &sandbox.SandboxConfig{
+			ValidNetworkTools: []string{"web_fetch"},
+		},
+	}
+	wsDir := def.ResolvePath(tmpDir)
+	if err := os.MkdirAll(wsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wsDir, "workspace.yaml"), []byte("name: test\ntype: default\nsandbox:\n  allowed_network_tools:\n    - shell_exec\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := newWorkspaceFromDefinition(def, tmpDir)
+	if err == nil {
+		t.Fatal("expected workspace config validation error")
+	}
+	if !strings.Contains(err.Error(), `invalid network tool "shell_exec"`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestEffectiveSandbox_RejectsAgentAllowedToolsOutsideDefinitionCatalog(t *testing.T) {
+	ws := &Workspace{
+		Definition: &WorkspaceDefinition{
+			Name: "default",
+			Type: WorkspaceTypeDefault,
+			Sandbox: &sandbox.SandboxConfig{
+				ValidNetworkTools: []string{"web_fetch"},
+			},
+		},
+		Config: &WorkspaceConfig{
+			Name: "default",
+			Type: WorkspaceTypeDefault,
+		},
+	}
+
+	agentSandbox := &sandbox.SandboxConfig{}
+	if err := agentSandbox.SetAllowedNetworkTools([]string{"shell_exec"}); err != nil {
+		t.Fatalf("SetAllowedNetworkTools returned error: %v", err)
+	}
+
+	_, err := ws.EffectiveSandbox(agentSandbox)
+	if err == nil {
+		t.Fatal("expected EffectiveSandbox to reject agent allowlist outside definition catalog")
+	}
+	if !strings.Contains(err.Error(), `invalid network tool "shell_exec"`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestEffectiveSandbox_RejectsLayeredAllowlistBypassOutsideDefinitionCatalog(t *testing.T) {
+	ws := &Workspace{
+		Definition: &WorkspaceDefinition{
+			Name: "default",
+			Type: WorkspaceTypeDefault,
+			Sandbox: &sandbox.SandboxConfig{
+				ValidNetworkTools: []string{"web_fetch"},
+			},
+		},
+		Config: &WorkspaceConfig{
+			Name: "default",
+			Type: WorkspaceTypeDefault,
+			Sandbox: sandbox.SandboxConfig{
+				AllowedNetworkTools: []string{"web_fetch"},
+			},
+		},
+	}
+	ws.Config.Sandbox.SetAllowedNetworkTools([]string{"web_fetch"})
+
+	agentSandbox := &sandbox.SandboxConfig{}
+	if err := agentSandbox.SetAllowedNetworkTools([]string{"web_fetch", "shell_exec"}); err != nil {
+		t.Fatalf("SetAllowedNetworkTools returned error: %v", err)
+	}
+
+	_, err := ws.EffectiveSandbox(agentSandbox)
+	if err == nil {
+		t.Fatal("expected EffectiveSandbox to reject layered allowlist outside definition catalog")
+	}
+	if !strings.Contains(err.Error(), "exceeds workspace definition sandbox.valid_network_tools") {
+		t.Fatalf("expected catalog upper-bound error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), `invalid network tool "shell_exec"`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestEffectiveSandbox_AcceptsAgentAllowedToolsWithinDefinitionCatalog(t *testing.T) {
+	ws := &Workspace{
+		Definition: &WorkspaceDefinition{
+			Name: "default",
+			Type: WorkspaceTypeDefault,
+			Sandbox: &sandbox.SandboxConfig{
+				ValidNetworkTools: []string{"web_fetch", "shell_exec"},
+			},
+		},
+		Config: &WorkspaceConfig{
+			Name: "default",
+			Type: WorkspaceTypeDefault,
+		},
+	}
+
+	agentSandbox := &sandbox.SandboxConfig{}
+	if err := agentSandbox.SetAllowedNetworkTools([]string{"SHELL_EXEC"}); err != nil {
+		t.Fatalf("SetAllowedNetworkTools returned error: %v", err)
+	}
+
+	sb, err := ws.EffectiveSandbox(agentSandbox)
+	if err != nil {
+		t.Fatalf("EffectiveSandbox returned error: %v", err)
+	}
+	if len(sb.AllowedNetworkTools) != 1 || sb.AllowedNetworkTools[0] != "shell_exec" {
+		t.Fatalf("unexpected allowed_network_tools: %v", sb.AllowedNetworkTools)
+	}
+}
+
+func TestNewWorkspaceFromDefinition_AcceptsWorkspaceConfigToolsWithinDefinitionCatalog(t *testing.T) {
+	tmpDir := t.TempDir()
+	def := &WorkspaceDefinition{
+		Name: "test",
+		Type: WorkspaceTypeDefault,
+		Sandbox: &sandbox.SandboxConfig{
+			ValidNetworkTools: []string{"web_fetch", "shell_exec"},
+		},
+	}
+	wsDir := def.ResolvePath(tmpDir)
+	if err := os.MkdirAll(wsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wsDir, "workspace.yaml"), []byte("name: test\ntype: default\nsandbox:\n  allowed_network_tools:\n    - WEB_FETCH\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ws, err := newWorkspaceFromDefinition(def, tmpDir)
+	if err != nil {
+		t.Fatalf("expected workspace config to load: %v", err)
+	}
+	if len(ws.Config.Sandbox.AllowedNetworkTools) != 1 || ws.Config.Sandbox.AllowedNetworkTools[0] != "web_fetch" {
+		t.Fatalf("unexpected normalized allowed_network_tools: %v", ws.Config.Sandbox.AllowedNetworkTools)
+	}
+	if !ws.Config.Sandbox.HasAllowedNetworkToolsOverride() {
+		t.Fatal("expected allowed_network_tools override flag to be preserved")
+	}
+}
+
+func TestNewWorkspaceFromDefinition_RejectsWorkspaceCatalogOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+	def := &WorkspaceDefinition{
+		Name: "test",
+		Type: WorkspaceTypeDefault,
+		Sandbox: &sandbox.SandboxConfig{
+			ValidNetworkTools: []string{"web_fetch"},
+		},
+	}
+	wsDir := def.ResolvePath(tmpDir)
+	if err := os.MkdirAll(wsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wsDir, "workspace.yaml"), []byte("name: test\ntype: default\nsandbox:\n  valid_network_tools:\n    - shell_exec\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := newWorkspaceFromDefinition(def, tmpDir)
+	if err == nil {
+		t.Fatal("expected workspace config catalog override error")
+	}
+	if !strings.Contains(err.Error(), "workspace config cannot set sandbox.valid_network_tools") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -476,7 +678,10 @@ func TestEffectiveSandbox_NoRootAtAll(t *testing.T) {
 		DataDir: "/data/workspaces/default",
 	}
 
-	sb := ws.EffectiveSandbox(nil)
+	sb, err := ws.EffectiveSandbox(nil)
+	if err != nil {
+		t.Fatalf("EffectiveSandbox returned error: %v", err)
+	}
 	wantRoot := filepath.Join("/data/workspaces/default", "space")
 	if sb.Root != wantRoot {
 		t.Errorf("sandbox.Root = %q, want %q", sb.Root, wantRoot)
