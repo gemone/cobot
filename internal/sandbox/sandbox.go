@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -56,10 +57,12 @@ type SandboxConfig struct {
 	AllowPaths          []string `yaml:"allow_paths,omitempty"`
 	ReadonlyPaths       []string `yaml:"readonly_paths,omitempty"`
 	AllowNetwork        bool     `yaml:"allow_network"`
+	ValidNetworkTools   []string `yaml:"valid_network_tools,omitempty"`
 	AllowedNetworkTools []string `yaml:"allowed_network_tools,omitempty"`
 	BlockedCommands     []string `yaml:"blocked_commands,omitempty"`
 
 	allowNetworkSet        bool `yaml:"-"`
+	validNetworkToolsSet   bool `yaml:"-"`
 	allowedNetworkToolsSet bool `yaml:"-"`
 }
 
@@ -74,6 +77,7 @@ func (s SandboxConfig) Clone() SandboxConfig {
 	cloned := s
 	cloned.AllowPaths = cloneStrings(s.AllowPaths)
 	cloned.ReadonlyPaths = cloneStrings(s.ReadonlyPaths)
+	cloned.ValidNetworkTools = cloneStrings(s.ValidNetworkTools)
 	cloned.AllowedNetworkTools = cloneStrings(s.AllowedNetworkTools)
 	cloned.BlockedCommands = cloneStrings(s.BlockedCommands)
 	return cloned
@@ -87,16 +91,90 @@ func (s *SandboxConfig) SetAllowNetwork(allow bool) {
 	s.allowNetworkSet = true
 }
 
-func (s *SandboxConfig) SetAllowedNetworkTools(tools []string) {
+func normalizeNetworkTools(tools []string) []string {
+	if len(tools) == 0 {
+		return nil
+	}
+	normalized := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		normalized = append(normalized, strings.ToLower(tool))
+	}
+	return normalized
+}
+
+func validateNetworkTools(tools, validTools []string) error {
+	if len(tools) == 0 || len(validTools) == 0 {
+		return nil
+	}
+	validSet := make(map[string]struct{}, len(validTools))
+	for _, tool := range validTools {
+		validSet[strings.ToLower(tool)] = struct{}{}
+	}
+	for _, tool := range tools {
+		lower := strings.ToLower(tool)
+		if _, ok := validSet[lower]; ok {
+			continue
+		}
+		valid := make([]string, 0, len(validSet))
+		for validTool := range validSet {
+			valid = append(valid, validTool)
+		}
+		sort.Strings(valid)
+		return fmt.Errorf("invalid network tool %q: allowed tools are %v", lower, valid)
+	}
+	return nil
+}
+
+// ValidateNetworkTools normalizes tools to lowercase and reports whether each
+// entry exists in validTools. Returns the normalized slice on success.
+// An empty validTools catalog short-circuits validation.
+func ValidateNetworkTools(tools, validTools []string) ([]string, error) {
+	normalized := normalizeNetworkTools(tools)
+	if err := validateNetworkTools(normalized, validTools); err != nil {
+		return nil, err
+	}
+	return normalized, nil
+}
+
+func (s *SandboxConfig) SetValidNetworkTools(tools []string) {
 	if s == nil {
 		return
 	}
-	s.AllowedNetworkTools = cloneStrings(tools)
+	s.ValidNetworkTools = normalizeNetworkTools(tools)
+	s.validNetworkToolsSet = true
+}
+
+// SetAllowedNetworkTools sets the active allowlist for network-enabled tools.
+// Tool names are normalized to lowercase. When valid_network_tools is configured,
+// the allowlist is validated against that catalog.
+func (s *SandboxConfig) SetAllowedNetworkTools(tools []string) error {
+	if s == nil {
+		return nil
+	}
+	normalized, err := ValidateNetworkTools(tools, s.ValidNetworkTools)
+	if err != nil {
+		return err
+	}
+	s.AllowedNetworkTools = normalized
 	s.allowedNetworkToolsSet = true
+	return nil
+}
+
+// ValidateAllowedNetworkTools reports whether the configured allowlist fits
+// within the current valid_network_tools catalog.
+func (s *SandboxConfig) ValidateAllowedNetworkTools() error {
+	if s == nil {
+		return nil
+	}
+	return validateNetworkTools(s.AllowedNetworkTools, s.ValidNetworkTools)
 }
 
 func (s *SandboxConfig) HasAllowNetworkOverride() bool {
 	return s != nil && s.allowNetworkSet
+}
+
+func (s *SandboxConfig) HasValidNetworkToolsOverride() bool {
+	return s != nil && s.validNetworkToolsSet
 }
 
 func (s *SandboxConfig) HasAllowedNetworkToolsOverride() bool {
@@ -123,6 +201,10 @@ func MergeConfigs(base, override *SandboxConfig) SandboxConfig {
 	if len(override.ReadonlyPaths) > 0 {
 		merged.ReadonlyPaths = cloneStrings(override.ReadonlyPaths)
 	}
+	if override.HasValidNetworkToolsOverride() {
+		merged.ValidNetworkTools = cloneStrings(override.ValidNetworkTools)
+		merged.validNetworkToolsSet = true
+	}
 	if override.HasAllowedNetworkToolsOverride() {
 		merged.AllowedNetworkTools = cloneStrings(override.AllowedNetworkTools)
 		merged.allowedNetworkToolsSet = true
@@ -144,7 +226,14 @@ func (s *SandboxConfig) UnmarshalYAML(value *yaml.Node) error {
 	}
 	*s = SandboxConfig(decoded)
 	s.allowNetworkSet = yamlMappingHasKey(value, "allow_network")
-	s.allowedNetworkToolsSet = yamlMappingHasKey(value, "allowed_network_tools")
+	if yamlMappingHasKey(value, "valid_network_tools") {
+		s.SetValidNetworkTools(s.ValidNetworkTools)
+	}
+	if yamlMappingHasKey(value, "allowed_network_tools") {
+		if err := s.SetAllowedNetworkTools(s.AllowedNetworkTools); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -155,6 +244,7 @@ func (s SandboxConfig) MarshalYAML() (any, error) {
 		AllowPaths          []string  `yaml:"allow_paths,omitempty"`
 		ReadonlyPaths       []string  `yaml:"readonly_paths,omitempty"`
 		AllowNetwork        *bool     `yaml:"allow_network,omitempty"`
+		ValidNetworkTools   *[]string `yaml:"valid_network_tools,omitempty"`
 		AllowedNetworkTools *[]string `yaml:"allowed_network_tools,omitempty"`
 		BlockedCommands     []string  `yaml:"blocked_commands,omitempty"`
 	}
@@ -168,6 +258,10 @@ func (s SandboxConfig) MarshalYAML() (any, error) {
 	if s.allowedNetworkToolsSet || len(s.AllowedNetworkTools) > 0 {
 		tools := cloneStrings(s.AllowedNetworkTools)
 		encoded.AllowedNetworkTools = &tools
+	}
+	if s.validNetworkToolsSet || len(s.ValidNetworkTools) > 0 {
+		tools := cloneStrings(s.ValidNetworkTools)
+		encoded.ValidNetworkTools = &tools
 	}
 	if s.AllowNetwork || s.allowNetworkSet {
 		allow := s.AllowNetwork

@@ -6,8 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestSandboxConfig_IsAllowed(t *testing.T) {
@@ -715,6 +718,24 @@ func TestMergeConfigs_NoOverridePreservesBase(t *testing.T) {
 	}
 }
 
+func TestMergeConfigs_ExplicitEmptyValidNetworkToolsOverridesBase(t *testing.T) {
+	base := &SandboxConfig{
+		ValidNetworkTools: []string{"web_fetch", "shell_exec"},
+	}
+	base.validNetworkToolsSet = true
+
+	override := &SandboxConfig{}
+	override.SetValidNetworkTools(nil)
+
+	merged := MergeConfigs(base, override)
+	if len(merged.ValidNetworkTools) != 0 {
+		t.Fatalf("expected empty valid tool catalog to override base, got %v", merged.ValidNetworkTools)
+	}
+	if !merged.validNetworkToolsSet {
+		t.Fatal("expected validNetworkToolsSet flag to remain true")
+	}
+}
+
 func TestSandboxedCmd_NilSafety(t *testing.T) {
 	// Nil SandboxedCmd.Start() should return error
 	var scmd *SandboxedCmd
@@ -829,4 +850,129 @@ func TestLaunchProcess_ReturnsNilOnError(t *testing.T) {
 	}
 	// Clean up
 	scmd.Cleanup()
+}
+
+func TestSetAllowedNetworkTools_ValidAgainstConfiguredCatalog(t *testing.T) {
+	tests := []struct {
+		name     string
+		tools    []string
+		expected []string
+	}{
+		{"empty list", []string{}, []string{}},
+		{"single tool", []string{"web_fetch"}, []string{"web_fetch"}},
+		{"multiple tools", []string{"web_fetch", "shell_exec"}, []string{"web_fetch", "shell_exec"}},
+		{"uppercase normalized", []string{"WEB_FETCH"}, []string{"web_fetch"}},
+		{"mixed case normalized", []string{"Web_Fetch", "SHELL_EXEC"}, []string{"web_fetch", "shell_exec"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &SandboxConfig{}
+			cfg.SetValidNetworkTools([]string{"web_fetch", "shell_exec"})
+			err := cfg.SetAllowedNetworkTools(tt.tools)
+			if err != nil {
+				t.Errorf("SetAllowedNetworkTools(%v) failed: %v", tt.tools, err)
+			}
+			if !slices.Equal(cfg.AllowedNetworkTools, tt.expected) {
+				t.Errorf("got %v, expected %v", cfg.AllowedNetworkTools, tt.expected)
+			}
+			if !cfg.HasAllowedNetworkToolsOverride() {
+				t.Error("flag should be set")
+			}
+		})
+	}
+}
+
+func TestSetAllowedNetworkTools_WithoutConfiguredCatalogStillNormalizes(t *testing.T) {
+	cfg := &SandboxConfig{}
+	if err := cfg.SetAllowedNetworkTools([]string{"CuRL", "WEB_FETCH"}); err != nil {
+		t.Fatalf("SetAllowedNetworkTools returned unexpected error: %v", err)
+	}
+	expected := []string{"curl", "web_fetch"}
+	if !slices.Equal(cfg.AllowedNetworkTools, expected) {
+		t.Fatalf("got %v, expected %v", cfg.AllowedNetworkTools, expected)
+	}
+	if !cfg.HasAllowedNetworkToolsOverride() {
+		t.Fatal("flag should be set")
+	}
+}
+
+func TestSetAllowedNetworkTools_InvalidAgainstConfiguredCatalog(t *testing.T) {
+	tests := []struct {
+		name    string
+		tools   []string
+		wantErr bool
+	}{
+		{"invalid tool", []string{"curl"}, true},
+		{"invalid tool in list", []string{"web_fetch", "curl"}, true},
+		{"typo", []string{"web-fetch"}, true},
+		{"completely wrong", []string{"bad_tool"}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &SandboxConfig{}
+			cfg.SetValidNetworkTools([]string{"web_fetch", "shell_exec"})
+			err := cfg.SetAllowedNetworkTools(tt.tools)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("SetAllowedNetworkTools(%v) error = %v, wantErr = %v", tt.tools, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestSandboxConfig_UnmarshalYAML_NetworkTools(t *testing.T) {
+	var cfg SandboxConfig
+	data := []byte(`
+sandbox:
+  allow_network: true
+  valid_network_tools:
+    - WEB_FETCH
+    - shell_exec
+  allowed_network_tools:
+    - Web_Fetch
+`)
+
+	var wrapper struct {
+		Sandbox SandboxConfig `yaml:"sandbox"`
+	}
+	if err := yaml.Unmarshal(data, &wrapper); err != nil {
+		t.Fatalf("yaml.Unmarshal failed: %v", err)
+	}
+	cfg = wrapper.Sandbox
+
+	if !cfg.AllowNetwork || !cfg.HasAllowNetworkOverride() {
+		t.Fatal("expected allow_network override to be preserved")
+	}
+	if !cfg.HasValidNetworkToolsOverride() {
+		t.Fatal("expected valid_network_tools override flag to be set")
+	}
+	if !slices.Equal(cfg.ValidNetworkTools, []string{"web_fetch", "shell_exec"}) {
+		t.Fatalf("unexpected valid network tools: %v", cfg.ValidNetworkTools)
+	}
+	if !cfg.HasAllowedNetworkToolsOverride() {
+		t.Fatal("expected allowed_network_tools override flag to be set")
+	}
+	if !slices.Equal(cfg.AllowedNetworkTools, []string{"web_fetch"}) {
+		t.Fatalf("unexpected allowed network tools: %v", cfg.AllowedNetworkTools)
+	}
+}
+
+func TestUnmarshalYAML_InvalidAllowedToolsInYAML(t *testing.T) {
+	yamlData := `
+allow_network: true
+valid_network_tools:
+  - web_fetch
+allowed_network_tools:
+  - web_fetch
+  - invalid_tool
+`
+	var cfg SandboxConfig
+	err := yaml.Unmarshal([]byte(yamlData), &cfg)
+	if err == nil {
+		t.Fatal("expected error when unmarshaling invalid allowed_network_tools")
+	}
+	if !strings.Contains(err.Error(), `invalid network tool "invalid_tool"`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
 }
