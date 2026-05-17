@@ -243,6 +243,19 @@ func (w *Workspace) SaveConfig() error {
 	return config.SaveYAML(w.ConfigPath(), w.Config)
 }
 
+// ModifyConfig applies a mutation to the config under mutex lock and saves it atomically.
+func (w *Workspace) ModifyConfig(fn func(*WorkspaceConfig)) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	fn(w.Config)
+	w.Config.UpdatedAt = time.Now()
+	if err := os.MkdirAll(filepath.Dir(w.ConfigPath()), 0755); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+	return config.SaveYAML(w.ConfigPath(), w.Config)
+}
+
 func (w *Workspace) ValidatePath(path string) error {
 	absPath, err := filepath.Abs(path)
 	if err != nil {

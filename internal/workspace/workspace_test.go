@@ -713,15 +713,11 @@ func TestWorkspace_SaveConfig_Concurrent(t *testing.T) {
 	done := make(chan error, 10)
 	for i := 0; i < 10; i++ {
 		go func(idx int) {
-			// Simulate modifying config
-			ws.Config.EnabledSkills = append(ws.Config.EnabledSkills, fmt.Sprintf("skill-%d", idx))
-
-			// Save config
-			if err := ws.SaveConfig(); err != nil {
-				done <- err
-			} else {
-				done <- nil
-			}
+			// Use ModifyConfig to safely modify and save under lock
+			err := ws.ModifyConfig(func(cfg *WorkspaceConfig) {
+				cfg.EnabledSkills = append(cfg.EnabledSkills, fmt.Sprintf("skill-%d", idx))
+			})
+			done <- err
 		}(i)
 	}
 
